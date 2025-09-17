@@ -942,6 +942,80 @@ class ModernMainWindow(QMainWindow):
         top_row.addWidget(header_box, 2)
         root.addLayout(top_row)
 
+        hotspots_box = QGroupBox("Najbardziej problematyczne miejsca")
+        hotspots_layout = QVBoxLayout(hotspots_box)
+        hotspots_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.top_issues_tree = QTreeWidget()
+        self.top_issues_tree.setColumnCount(5)
+        self.top_issues_tree.setHeaderLabels([
+            "Maszyna",
+            "Pin",
+            "Step",
+            "Parametr",
+            "Zmian",
+        ])
+        self.top_issues_tree.setAlternatingRowColors(True)
+        self.top_issues_tree.setRootIsDecorated(False)
+        self.top_issues_tree.setSelectionMode(QTreeWidget.SingleSelection)
+        self.top_issues_tree.setStyleSheet(
+            """
+            QTreeWidget { border: 1px solid #e0e0e0; border-radius: 8px; }
+            QHeaderView::section { background: #f5f6f7; padding:8px; border: none; font-weight: 600; }
+            QTreeWidget::item { padding: 6px 8px; }
+            QTreeView::item:selected { background: transparent; outline: 1px solid #3498db; }
+            """
+        )
+        self.top_issues_tree.itemClicked.connect(self._on_top_issue_click)
+        for col in range(self.top_issues_tree.columnCount()):
+            try:
+                self.top_issues_tree.header().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+            except Exception:
+                pass
+        hotspots_layout.addWidget(self.top_issues_tree)
+
+        sections_row = QHBoxLayout()
+        sections_row.setSpacing(12)
+
+        left_column = QVBoxLayout()
+        left_column.setSpacing(12)
+        left_column.setContentsMargins(0, 0, 0, 0)
+        left_column.addWidget(hotspots_box)
+
+        summary_box = QGroupBox("Analiza ilości zmian - Podsumowanie")
+        summary_layout = QVBoxLayout(summary_box)
+
+        summary_toolbar = QHBoxLayout()
+        summary_expand = QPushButton("Rozwiń wszystko")
+        summary_expand.clicked.connect(lambda: self.change_tree.expandAll())
+        summary_collapse = QPushButton("Zwiń wszystko")
+        summary_collapse.clicked.connect(lambda: self.change_tree.collapseAll())
+        summary_toolbar.addWidget(summary_expand)
+        summary_toolbar.addWidget(summary_collapse)
+        summary_toolbar.addStretch(1)
+        summary_layout.addLayout(summary_toolbar)
+
+        self.change_tree = QTreeWidget()
+        self.change_tree.setHeaderLabels(["Maszyna / Pin / Step / Parametr", "Zmian"])
+        self.change_tree.setAlternatingRowColors(True)
+        self.change_tree.setRootIsDecorated(True)
+        self.change_tree.setStyleSheet(
+            """
+            QTreeWidget { border: 1px solid #e0e0e0; border-radius: 8px; }
+            QHeaderView::section { background: #f5f6f7; padding:8px; border: none; font-weight: 600; }
+            QTreeWidget::item { padding: 6px 8px; }
+            QTreeView::item:selected { background: transparent; outline: 1px solid #3498db; }
+            """
+        )
+        self.change_tree.itemClicked.connect(self._on_change_tree_click)
+        try:
+            self.change_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+            self.change_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        except Exception:
+            pass
+        summary_layout.addWidget(self.change_tree)
+        left_column.addWidget(summary_box, 1)
+        sections_row.addLayout(left_column, 1)
 
         details_box = QGroupBox("Drzewo danych")
         details_layout = QVBoxLayout(details_box)
@@ -959,7 +1033,7 @@ class ModernMainWindow(QMainWindow):
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Maszyna / Data", "Zmian", "Szczegóły"])
         self.tree.setAlternatingRowColors(True)
-        self.tree.setColumnWidth(0, 320)
+        self.tree.setColumnWidth(0, 260)
         self.tree.setColumnWidth(1, 90)
         self.tree.setStyleSheet(
             """
@@ -970,7 +1044,9 @@ class ModernMainWindow(QMainWindow):
             """
         )
         details_layout.addWidget(self.tree)
-        sp_layout.addWidget(details_box, 1)
+        sections_row.addWidget(details_box, 1)
+
+        sp_layout.addLayout(sections_row, 1)
 
         self.tabs.addTab(self.summary_page, "Zmiany")
 
@@ -2367,66 +2443,206 @@ class ModernMainWindow(QMainWindow):
         try:
             from PyQt5.QtWidgets import QTreeWidgetItem
             events = getattr(self, 'analysis_events', [])
-            if not hasattr(self, 'top_issues_tree') or not hasattr(self, 'change_tree'):
+            change_tree = getattr(self, 'change_tree', None)
+            top_tree = getattr(self, 'top_issues_tree', None)
+            if change_tree is None or top_tree is None:
                 return
-            per_mach = {}
+
+            combo_counts: dict[tuple[str, str, str, str], int] = {}
+            nested: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
             for e in events:
                 if e.get('type') != 'change':
                     continue
-                m = e.get('machine', '')
-                grp = per_mach.setdefault(m, {'pin': {}, 'step': {}, 'param': {}})
-                pin = e.get('pin', '')
-                if pin:
-                    grp['pin'][pin] = grp['pin'].get(pin, 0) + 1
-                st = e.get('step')
-                if st is not None:
-                    s = str(st)
-                    grp['step'][s] = grp['step'].get(s, 0) + 1
-                for name, ch in (e.get('cols') or {}).items():
-                    if ch:
-                        grp['param'][name] = grp['param'].get(name, 0) + 1
+                machine = e.get('machine', '')
+                pin = e.get('pin') or ''
+                step_val = e.get('step')
+                step_key = str(step_val) if step_val is not None else ''
+                cols = e.get('cols') or {}
+                for name, change in cols.items():
+                    if not change:
+                        continue
+                    key = (machine, pin, step_key, name)
+                    combo_counts[key] = combo_counts.get(key, 0) + 1
+                    machine_entry = nested.setdefault(machine, {})
+                    pin_entry = machine_entry.setdefault(pin, {})
+                    step_entry = pin_entry.setdefault(step_key, {})
+                    step_entry[name] = step_entry.get(name, 0) + 1
 
-            self.top_issues_tree.clear()
-            for mach, groups in sorted(per_mach.items(), key=lambda kv: -(sum(groups['pin'].values()) + sum(groups['step'].values()) + sum(groups['param'].values()))):
-                tot = sum(groups['pin'].values()) + sum(groups['step'].values()) + sum(groups['param'].values())
-                m_item = QTreeWidgetItem([mach, str(tot)])
-                m_item.setData(0, Qt.UserRole, ('machine', mach))
-                self.top_issues_tree.addTopLevelItem(m_item)
-                for label, key in (("Piny", 'pin'), ("Kroki", 'step'), ("Parametry", 'param')):
-                    grp_item = QTreeWidgetItem([label, str(sum(groups[key].values()))])
-                    m_item.addChild(grp_item)
-                    for name, cnt in sorted(groups[key].items(), key=lambda kv: -kv[1])[:20]:
-                        it = QTreeWidgetItem([name, str(cnt)])
-                        it.setData(0, Qt.UserRole, (key, mach, name))
-                        grp_item.addChild(it)
-                m_item.setExpanded(True)
+            def step_total(params_dict: dict[str, int]) -> int:
+                return sum(params_dict.values())
 
-            self.change_tree.clear()
-            idx = {}
-            for e in events:
-                if e.get('type') != 'change':
-                    continue
-                m = e.get('machine', '')
-                pin = e.get('pin', '')
-                st = str(e.get('step'))
-                idx_m = idx.setdefault(m, {})
-                idx_p = idx_m.setdefault(pin, {})
-                idx_p[st] = idx_p.get(st, 0) + 1
-            for mach, pins in sorted(idx.items()):
-                m_cnt = sum(sum(steps.values()) for steps in pins.values())
-                m_item = QTreeWidgetItem([mach, str(m_cnt)])
-                m_item.setData(0, Qt.UserRole, ('machine', mach))
-                self.change_tree.addTopLevelItem(m_item)
-                for pin, steps in sorted(pins.items(), key=lambda kv: -sum(kv[1].values())):
-                    p_cnt = sum(steps.values())
-                    p_it = QTreeWidgetItem([pin or '(brak)', str(p_cnt)])
-                    p_it.setData(0, Qt.UserRole, ('pin', mach, pin))
+            def pin_total(steps_dict: dict[str, dict[str, int]]) -> int:
+                return sum(step_total(params_dict) for params_dict in steps_dict.values())
+
+            def machine_total(pins_dict: dict[str, dict[str, dict[str, int]]]) -> int:
+                return sum(pin_total(steps_dict) for steps_dict in pins_dict.values())
+
+            def color_for(val: int, vmin: int, vmax: int) -> QColor:
+                if vmax <= vmin:
+                    return QColor('#e0f7e9')
+                ratio = max(0.0, min(1.0, (val - vmin) / float(vmax - vmin)))
+                start = QColor(0x2e, 0xcc, 0x71)
+                end = QColor(0xe7, 0x4c, 0x3c)
+                rr = int(start.red() + (end.red() - start.red()) * ratio)
+                gg = int(start.green() + (end.green() - start.green()) * ratio)
+                bb = int(start.blue() + (end.blue() - start.blue()) * ratio)
+                return QColor(rr, gg, bb)
+
+            def translucent(color: QColor, alpha: int) -> QColor:
+                tmp = QColor(color)
+                tmp.setAlpha(alpha)
+                return tmp
+
+            try:
+                top_tree.blockSignals(True)
+            except Exception:
+                pass
+            top_tree.clear()
+            try:
+                top_tree.setItemDelegateForColumn(4, CountBadgeDelegate(top_tree))
+            except Exception:
+                pass
+            if combo_counts:
+                combo_min = min(combo_counts.values())
+                combo_max = max(combo_counts.values())
+            else:
+                combo_min = combo_max = 0
+            limit = 25
+            for (machine, pin, step_key, name), cnt in sorted(
+                combo_counts.items(),
+                key=lambda kv: (-kv[1], kv[0][0], kv[0][1], kv[0][2], kv[0][3]),
+            ):
+                item = QTreeWidgetItem([
+                    machine or '(brak)',
+                    pin or '(brak)',
+                    step_key or '(brak)',
+                    name,
+                    str(cnt),
+                ])
+                item.setData(0, Qt.UserRole, ('combo', machine, pin, step_key, name))
+                item.setTextAlignment(4, Qt.AlignCenter)
+                color = color_for(cnt, combo_min, combo_max)
+                item.setBackground(4, color)
+                for idx in range(4):
+                    item.setBackground(idx, translucent(color, 40))
+                top_tree.addTopLevelItem(item)
+                limit -= 1
+                if limit <= 0:
+                    break
+            try:
+                top_tree.blockSignals(False)
+            except Exception:
+                pass
+
+            try:
+                change_tree.blockSignals(True)
+            except Exception:
+                pass
+            change_tree.clear()
+            try:
+                change_tree.setItemDelegateForColumn(1, CountBadgeDelegate(change_tree))
+            except Exception:
+                pass
+
+            def label_sort_key(value: str) -> tuple[int, str]:
+                text = (value or "").strip()
+                if not text:
+                    return (1, "")
+                return (0, text.lower())
+
+            def step_sort_key(value: str) -> tuple[int, str]:
+                text = (value or "").strip()
+                if not text:
+                    return (1, "")
+                try:
+                    number = int(text)
+                except ValueError:
+                    return (0, text.lower())
+                return (0, f"{number:010d}")
+
+            machine_totals = {
+                machine_key: machine_total(pins_dict)
+                for machine_key, pins_dict in nested.items()
+            }
+            if machine_totals:
+                m_min = min(machine_totals.values())
+                m_max = max(machine_totals.values())
+            else:
+                m_min = m_max = 0
+
+            for machine, pins in sorted(nested.items(), key=lambda kv: label_sort_key(kv[0])):
+                m_cnt = machine_total(pins)
+                m_item = QTreeWidgetItem([machine or '(brak)', str(m_cnt)])
+                m_item.setData(0, Qt.UserRole, ('machine', machine))
+                m_item.setTextAlignment(1, Qt.AlignCenter)
+                m_color = color_for(m_cnt, m_min, m_max)
+                m_item.setBackground(0, translucent(m_color, 70))
+                m_item.setBackground(1, m_color)
+                change_tree.addTopLevelItem(m_item)
+                pin_totals = {pin_key: pin_total(step_dict) for pin_key, step_dict in pins.items()}
+                if pin_totals:
+                    p_min = min(pin_totals.values())
+                    p_max = max(pin_totals.values())
+                else:
+                    p_min = p_max = 0
+                for pin, steps in sorted(pins.items(), key=lambda kv: label_sort_key(kv[0])):
+                    p_cnt = pin_total(steps)
+                    p_label = pin or '(brak)'
+                    p_it = QTreeWidgetItem([p_label, str(p_cnt)])
+                    p_it.setData(0, Qt.UserRole, ('pin', machine, pin))
+                    p_it.setTextAlignment(1, Qt.AlignCenter)
+                    p_color = color_for(p_cnt, p_min, p_max)
+                    p_it.setBackground(0, translucent(p_color, 60))
+                    p_it.setBackground(1, p_color)
                     m_item.addChild(p_it)
-                    for st, cnt in sorted(steps.items(), key=lambda kv: -kv[1]):
-                        s_it = QTreeWidgetItem([f"Step {st}", str(cnt)])
-                        s_it.setData(0, Qt.UserRole, ('step', mach, st))
+                    step_totals = {
+                        step_key: step_total(param_dict) for step_key, param_dict in steps.items()
+                    }
+                    if step_totals:
+                        s_min = min(step_totals.values())
+                        s_max = max(step_totals.values())
+                    else:
+                        s_min = s_max = 0
+                    for step_key, params_dict in sorted(
+                        steps.items(), key=lambda kv: step_sort_key(kv[0])
+                    ):
+                        s_cnt = step_total(params_dict)
+                        s_label = f"Step {step_key}" if step_key else '(brak)'
+                        s_it = QTreeWidgetItem([s_label, str(s_cnt)])
+                        s_it.setData(0, Qt.UserRole, ('step', machine, step_key))
+                        s_it.setTextAlignment(1, Qt.AlignCenter)
+                        s_color = color_for(s_cnt, s_min, s_max)
+                        s_it.setBackground(0, translucent(s_color, 50))
+                        s_it.setBackground(1, s_color)
                         p_it.addChild(s_it)
-                m_item.setExpanded(True)
+                        param_values = list(params_dict.values())
+                        if param_values:
+                            prm_min = min(param_values)
+                            prm_max = max(param_values)
+                        else:
+                            prm_min = prm_max = 0
+                        for name, cnt in sorted(
+                            params_dict.items(), key=lambda kv: label_sort_key(kv[0])
+                        ):
+                            n_it = QTreeWidgetItem([name, str(cnt)])
+                            n_it.setData(
+                                0,
+                                Qt.UserRole,
+                                ('param', machine, pin, step_key, name),
+                            )
+                            n_it.setTextAlignment(1, Qt.AlignCenter)
+                            n_color = color_for(cnt, prm_min, prm_max)
+                            n_it.setBackground(0, translucent(n_color, 40))
+                            n_it.setBackground(1, n_color)
+                            s_it.addChild(n_it)
+            try:
+                change_tree.blockSignals(False)
+            except Exception:
+                pass
+            try:
+                change_tree.collapseAll()
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -2436,20 +2652,38 @@ class ModernMainWindow(QMainWindow):
             if not data:
                 return
             kind = data[0]
-            if kind == 'machine':
+            if kind == 'combo':
+                _, mach, pin, step, par = data
+                if mach:
+                    self._set_combo(self.f_machine, mach)
+                if pin:
+                    self._set_combo(self.f_pin, pin)
+                if step:
+                    self._set_combo(self.f_step, str(step))
+                if par:
+                    self._set_combo(self.f_param, par)
+            elif kind == 'machine':
                 self._set_combo(self.f_machine, data[1])
             elif kind == 'pin':
                 _, mach, pin = data
                 self._set_combo(self.f_machine, mach)
-                self._set_combo(self.f_pin, pin)
+                if pin:
+                    self._set_combo(self.f_pin, pin)
             elif kind == 'step':
                 _, mach, st = data
                 self._set_combo(self.f_machine, mach)
-                self._set_combo(self.f_step, str(st))
+                if st:
+                    self._set_combo(self.f_step, str(st))
             elif kind == 'param':
-                _, mach, par = data
-                self._set_combo(self.f_machine, mach)
-                self._set_combo(self.f_param, par)
+                _, mach, pin, st, par = data
+                if mach:
+                    self._set_combo(self.f_machine, mach)
+                if pin:
+                    self._set_combo(self.f_pin, pin)
+                if st:
+                    self._set_combo(self.f_step, str(st))
+                if par:
+                    self._set_combo(self.f_param, par)
             self._apply_analysis_filters()
         except Exception:
             pass
@@ -2465,11 +2699,23 @@ class ModernMainWindow(QMainWindow):
             elif kind == 'pin':
                 _, mach, pin = data
                 self._set_combo(self.f_machine, mach)
-                self._set_combo(self.f_pin, pin)
+                if pin:
+                    self._set_combo(self.f_pin, pin)
             elif kind == 'step':
                 _, mach, st = data
                 self._set_combo(self.f_machine, mach)
-                self._set_combo(self.f_step, str(st))
+                if st:
+                    self._set_combo(self.f_step, str(st))
+            elif kind == 'param':
+                _, mach, pin, st, par = data
+                if mach:
+                    self._set_combo(self.f_machine, mach)
+                if pin:
+                    self._set_combo(self.f_pin, pin)
+                if st:
+                    self._set_combo(self.f_step, str(st))
+                if par:
+                    self._set_combo(self.f_param, par)
             self._apply_analysis_filters()
         except Exception:
             pass
