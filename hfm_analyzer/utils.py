@@ -82,13 +82,20 @@ def list_mapped_network_drives() -> List[Tuple[str, str, str]]:
         except Exception:
             pass
 
-    def _normalized(mapping: Iterable[Tuple[str, str]]) -> List[Tuple[str, str, str]]:
-        normalised: List[Tuple[str, str, str]] = []
-        for unc, drv in mapping:
-            core = _core_unc(unc)
-            if not core:
-                continue
-            normalised.append((core, drv.upper(), extract_unc_share(unc) or unc))
+
+    def _normalized(mapping: Iterable[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        def _split_unc(entry: str) -> List[str]:
+            replaced = entry.replace("/", "\\")
+            parts = [part for part in replaced.split("\\") if part]
+            return parts
+
+        def _core_unc(entry: str) -> str:
+            parts = _split_unc(entry)
+            if len(parts) >= 2:
+                return (parts[0] + "\\" + parts[1]).lower()
+            return (parts[0].lower() if parts else "")
+
+        normalised = [(_core_unc(unc), drv.upper()) for unc, drv in mapping]
         normalised.sort(key=lambda item: len(item[0]), reverse=True)
         return normalised
 
@@ -102,10 +109,27 @@ def map_unc_to_drive_if_possible(path: str) -> str:
         return path
 
     try:
-        core, rest = _core_and_rest(path)
+        def _split_unc(entry: str) -> List[str]:
+            replaced = entry.replace("/", "\\")
+            while replaced.startswith("\\"):
+                replaced = replaced[1:]
+            parts = [part for part in replaced.split("\\") if part]
+            return parts
+
+        def _core_unc(entry: str) -> tuple[str, str]:
+            parts = _split_unc(entry)
+            if len(parts) >= 2:
+                core = (parts[0] + "\\" + parts[1]).lower()
+                rest = "\\".join(parts[2:])
+                return core, rest
+            if parts:
+                return parts[0].lower(), ""
+            return "", ""
+
+        core, rest = _core_unc(path)
         if not core:
             return path
-        for unc_core, drive, _ in list_mapped_network_drives():
+        for unc_core, drive in list_mapped_network_drives():
             if core == unc_core:
                 remainder = rest.lstrip("\\/")
                 return drive + ("\\" + remainder if remainder else "")
