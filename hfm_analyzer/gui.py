@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import re
+import string
 import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -46,6 +47,7 @@ from PyQt5.QtWidgets import (
     QAction,
     QFileDialog,
     QDialog,
+    QInputDialog,
     QLineEdit,
     QFormLayout,
     QDialogButtonBox,
@@ -83,8 +85,112 @@ from .constants import (
     SUMMARY_PALETTE,
 )
 from .models import FoundFile, ParamSnapshot
-from .utils import map_unc_to_drive_if_possible, network_path_available
+from .utils import (
+    extract_unc_share,
+    list_mapped_network_drives,
+    map_network_drive,
+    map_unc_to_drive_if_possible,
+    network_path_available,
+)
 from .workers import AnalyzeWorker, IntranetWorker, ScanWorker
+
+
+def _available_drive_letters() -> list[str]:
+    """Return available drive letters for mapping network shares on Windows."""
+
+    if os.name != "nt":
+        return []
+
+    used_letters: set[str] = set()
+    try:
+        for _, drive, _ in list_mapped_network_drives():
+            used_letters.add(drive.rstrip(":").upper())
+    except Exception:
+        pass
+
+    for letter in string.ascii_uppercase:
+        if letter < "D":
+            continue
+        try:
+            if os.path.exists(f"{letter}:\\"):
+                used_letters.add(letter)
+        except Exception:
+            continue
+
+    return [letter for letter in string.ascii_uppercase if "D" <= letter <= "Z" and letter not in used_letters]
+
+
+def _maybe_offer_drive_mapping(parent: QWidget, path: str) -> str:
+    """Offer mapping for a UNC path when no matching mapped drive exists."""
+
+    if not path:
+        return path
+
+    try:
+        mapped = map_unc_to_drive_if_possible(path)
+    except Exception:
+        mapped = path
+
+    normalized_original = path.replace("/", "\\")
+    normalized_mapped = mapped.replace("/", "\\")
+
+    if not normalized_original.startswith("\\\\"):
+        return mapped
+    if normalized_mapped != normalized_original:
+        return mapped
+
+    share = extract_unc_share(path)
+    if not share or os.name != "nt":
+        return mapped
+
+    answer = QMessageBox.question(
+        parent,
+        "Mapowanie dysku",
+        (
+            "Wybrana ścieżka sieciowa nie jest aktualnie zmapowana na literę dysku.\n"
+            "Czy chcesz zmapować udział {share}?"
+        ).format(share=share),
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.Yes,
+    )
+    if answer != QMessageBox.Yes:
+        return mapped
+
+    available = _available_drive_letters()
+    if not available:
+        QMessageBox.warning(
+            parent,
+            "Brak wolnych liter",
+            "Brak wolnych liter dysków do mapowania. Zwolnij literę i spróbuj ponownie.",
+        )
+        return mapped
+
+    options = [f"{letter}:" for letter in available]
+    letter, ok = QInputDialog.getItem(
+        parent,
+        "Wybierz literę",
+        "Wybierz literę dysku dla udziału sieciowego:",
+        options,
+        0,
+        False,
+    )
+    if not ok or not letter:
+        return mapped
+
+    if map_network_drive(share, letter):
+        QMessageBox.information(
+            parent,
+            "Sukces",
+            f"Udział {share} został zmapowany jako {letter}.",
+        )
+        return map_unc_to_drive_if_possible(path)
+
+    QMessageBox.critical(
+        parent,
+        "Błąd",
+        "Nie udało się zmapować dysku. Sprawdź uprawnienia lub spróbuj ponownie.",
+    )
+    return mapped
 
 
 class PieChartWidget(QWidget):
@@ -377,7 +483,15 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Ustawienia")
         self.settings = settings
 
-        self.path_edit = QLineEdit(self.settings.value("base_path", "", type=str))
+        initial_path = self.settings.value("base_path", "", type=str)
+        self._block_path_signal = True
+        self.path_edit = QLineEdit(initial_path)
+        self._block_path_signal = False
+        self._pending_display_name = self.settings.value(
+            "base_path_display_name", "", type=str
+        ) or ""
+        self._last_checked_path = self.path_edit.text().strip()
+        self.path_edit.textChanged.connect(self._on_path_text_changed)
 
         self.workers_spin = QSpinBox()
         self.workers_spin.setRange(0, 32)
@@ -405,9 +519,11 @@ class SettingsDialog(QDialog):
         browse_btn.clicked.connect(self._browse)
 
         preset_evo = QPushButton("Ustaw EVO")
-        preset_evo.clicked.connect(lambda: self._set_path(DEFAULT_PATH_EVO, 424))
+        preset_evo.clicked.connect(lambda: self._set_path(DEFAULT_PATH_EVO, 424, "BSG EVO"))
         preset_h66 = QPushButton("Ustaw H66 2")
-        preset_h66.clicked.connect(lambda: self._set_path(DEFAULT_PATH_H66_2, 436))
+        preset_h66.clicked.connect(
+            lambda: self._set_path(DEFAULT_PATH_H66_2, 436, "BSG H66 2")
+        )
 
         form = QFormLayout()
         row = QHBoxLayout()
@@ -442,18 +558,46 @@ class SettingsDialog(QDialog):
             """
         )
 
-    def _set_path(self, path: str, line_id: int) -> None:
-        mapped = map_unc_to_drive_if_possible(path)
+    def _on_path_text_changed(self, _: str) -> None:
+        if not getattr(self, "_block_path_signal", False):
+            self._pending_display_name = ""
+            self._last_checked_path = ""
+
+    def _apply_path(self, path: str, display_name: str | None = None) -> str:
+        mapped = _maybe_offer_drive_mapping(self, path).strip()
+        self._pending_display_name = display_name or ""
+        self._block_path_signal = True
         self.path_edit.setText(mapped)
-        self.line_id_spin.setValue(line_id)
+        self._block_path_signal = False
+        self._last_checked_path = mapped
+        return mapped
+
+    def _set_path(
+        self, path: str, line_id: int | None = None, display_name: str | None = None
+    ) -> None:
+        self._apply_path(path, display_name)
+        if line_id is not None:
+            self.line_id_spin.setValue(line_id)
 
     def _browse(self) -> None:
         new_path = QFileDialog.getExistingDirectory(self, "Wskaż katalog bazowy z backupami")
         if new_path:
-            self.path_edit.setText(new_path)
+            self._apply_path(new_path)
 
     def _accept(self) -> None:
-        self.settings.setValue("base_path", self.path_edit.text().strip())
+        current = self.path_edit.text().strip()
+        if current and current != self._last_checked_path:
+            mapped = _maybe_offer_drive_mapping(self, current).strip()
+            if mapped != current:
+                self._block_path_signal = True
+                self.path_edit.setText(mapped)
+                self._block_path_signal = False
+            current = mapped
+            self._last_checked_path = current
+
+        display_name = self._pending_display_name.strip() if current else ""
+        self.settings.setValue("base_path", current)
+        self.settings.setValue("base_path_display_name", display_name)
         self.settings.setValue("analysis_workers", int(self.workers_spin.value()))
         self.settings.setValue("large_change_threshold_pct", int(self.threshold_spin.value()))
         self.settings.setValue("intranet_line_id", int(self.line_id_spin.value()))
@@ -469,6 +613,9 @@ class NetworkCheckDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Brak dostępu do katalogu sieciowego")
         self.settings = settings
+        self._current_display_name = (
+            self.settings.value("base_path_display_name", "", type=str) or ""
+        )
 
         info = QLabel(
             "Nie udało się uzyskać dostępu do wskazanego katalogu sieciowego.\n"
@@ -489,9 +636,11 @@ class NetworkCheckDialog(QDialog):
         choose_btn.clicked.connect(self._choose_path)
 
         preset_evo = QPushButton("Ustaw EVO")
-        preset_evo.clicked.connect(lambda: self._set_path(DEFAULT_PATH_EVO))
+        preset_evo.clicked.connect(lambda: self._set_path(DEFAULT_PATH_EVO, "BSG EVO"))
         preset_h66 = QPushButton("Ustaw H66 2")
-        preset_h66.clicked.connect(lambda: self._set_path(DEFAULT_PATH_H66_2))
+        preset_h66.clicked.connect(
+            lambda: self._set_path(DEFAULT_PATH_H66_2, "BSG H66 2")
+        )
 
         row1 = QHBoxLayout()
         row1.addWidget(retry_btn)
@@ -533,8 +682,14 @@ class NetworkCheckDialog(QDialog):
         if new_path:
             self._set_path(new_path)
 
-    def _set_path(self, path: str) -> None:
-        self.settings.setValue("base_path", path)
+    def _set_path(self, path: str, display_name: str | None = None) -> None:
+        mapped = _maybe_offer_drive_mapping(self, path).strip()
+        self.settings.setValue("base_path", mapped)
+        if mapped:
+            self._current_display_name = (display_name or "").strip()
+        else:
+            self._current_display_name = ""
+        self.settings.setValue("base_path_display_name", self._current_display_name)
         self._update_label()
 
     def _on_retry(self) -> None:
@@ -1160,10 +1315,14 @@ class ModernMainWindow(QMainWindow):
             pass
     def _refresh_base_path_label(self):
         base_path = self.settings.value("base_path", "", type=str)
-        disp = "(nie ustawiono)"
-        if base_path:
-            parts = base_path.rstrip('\\').split('\\')
-            disp = parts[-1] if parts else base_path
+        display_name = self.settings.value("base_path_display_name", "", type=str)
+        display_name = display_name.strip()
+        if display_name:
+            disp = display_name
+        elif base_path:
+            disp = base_path
+        else:
+            disp = "(nie ustawiono)"
 
         self.base_path_label.setText(f"Linia: <b>{disp}</b>")
 

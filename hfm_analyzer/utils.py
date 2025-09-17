@@ -7,8 +7,43 @@ import re
 from typing import Iterable, List, Tuple
 
 
-def list_mapped_network_drives() -> List[Tuple[str, str]]:
-    """Return list of ``(unc_prefix, drive_letter)`` for mapped network drives."""
+def _split_unc(entry: str) -> List[str]:
+    replaced = entry.replace("/", "\\")
+    while replaced.startswith("\\"):
+        replaced = replaced[1:]
+    parts = [part for part in replaced.split("\\") if part]
+    return parts
+
+
+def _core_unc(entry: str) -> str:
+    parts = _split_unc(entry)
+    if len(parts) >= 2:
+        return (parts[0] + "\\" + parts[1]).lower()
+    return parts[0].lower() if parts else ""
+
+
+def _core_and_rest(entry: str) -> tuple[str, str]:
+    parts = _split_unc(entry)
+    if len(parts) >= 2:
+        core = (parts[0] + "\\" + parts[1]).lower()
+        rest = "\\".join(parts[2:])
+        return core, rest
+    if parts:
+        return parts[0].lower(), ""
+    return "", ""
+
+
+def extract_unc_share(entry: str) -> str:
+    """Return ``\\\\host\\share`` for a UNC path or an empty string when invalid."""
+
+    parts = _split_unc(entry)
+    if len(parts) >= 2:
+        return f"\\\\{parts[0]}\\{parts[1]}"
+    return ""
+
+
+def list_mapped_network_drives() -> List[Tuple[str, str, str]]:
+    """Return list of ``(unc_prefix, drive_letter, raw_unc)`` for mapped network drives."""
 
     mappings: List[Tuple[str, str]] = []
 
@@ -46,6 +81,7 @@ def list_mapped_network_drives() -> List[Tuple[str, str]]:
                     mappings.append((unc, drive))
         except Exception:
             pass
+
 
     def _normalized(mapping: Iterable[Tuple[str, str]]) -> List[Tuple[str, str]]:
         def _split_unc(entry: str) -> List[str]:
@@ -102,6 +138,26 @@ def map_unc_to_drive_if_possible(path: str) -> str:
     return path
 
 
+def map_network_drive(unc_path: str, drive_letter: str, persistent: bool = True) -> bool:
+    """Map ``unc_path`` to ``drive_letter`` using ``net use`` on Windows."""
+
+    if not unc_path or not drive_letter:
+        return False
+    if os.name != "nt":
+        return False
+    try:
+        import subprocess
+
+        letter = drive_letter.rstrip(":").upper()
+        cmd = f'net use {letter}: "{unc_path}"'
+        if persistent:
+            cmd += " /persistent:yes"
+        subprocess.check_call(cmd, shell=True)
+        return True
+    except Exception:
+        return False
+
+
 def network_path_available(path: str) -> bool:
     """Return ``True`` when ``path`` exists and is accessible on disk."""
 
@@ -114,7 +170,9 @@ def network_path_available(path: str) -> bool:
 
 
 __all__ = [
+    "extract_unc_share",
     "list_mapped_network_drives",
     "map_unc_to_drive_if_possible",
+    "map_network_drive",
     "network_path_available",
 ]
