@@ -1421,6 +1421,15 @@ class ModernMainWindow(QMainWindow):
             self.line_native.set_data([], {})
         if hasattr(self, 'tree') and self.tree is not None:
             self.tree.clear()
+        try:
+            self.intranet_rows = []
+            self.intranet_filtered_rows = []
+            if hasattr(self, 'intra_table') and self.intra_table is not None:
+                self.intra_table.setRowCount(0)
+            if hasattr(self, 'bar_native') and self.bar_native is not None:
+                self.bar_native.set_overlay([], [])
+        except Exception:
+            pass
         self.logs_tab.clear()
         try:
             if hasattr(self, 'table') and self.table is not None:
@@ -1493,9 +1502,11 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             pass
         try:
-            self._start_intranet_fetch()
+            if self.found_files:
+                self._start_analysis()
         except Exception:
             pass
+
     def _render_summary(self):
 
         total_changes = len(self.found_files)
@@ -1738,7 +1749,41 @@ class ModernMainWindow(QMainWindow):
             except Exception:
                 pass
 
-    def _start_intranet_fetch(self):
+    def _start_intranet_fetch(self, show_progress: bool = True):
+
+        try:
+            prev_worker = getattr(self, 'intra_worker', None)
+            if prev_worker is not None and hasattr(prev_worker, 'isRunning') and prev_worker.isRunning():
+                try:
+                    if hasattr(prev_worker, 'requestInterruption'):
+                        prev_worker.requestInterruption()
+                except Exception:
+                    pass
+                try:
+                    prev_worker.quit()
+                except Exception:
+                    pass
+                try:
+                    prev_worker.wait(1000)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            self.intra_worker = None
+        except Exception:
+            pass
+
+        try:
+            self.intranet_rows = []
+            self.intranet_filtered_rows = []
+            if hasattr(self, 'intra_table') and self.intra_table is not None:
+                self.intra_table.setRowCount(0)
+            if hasattr(self, 'bar_native') and self.bar_native is not None:
+                self.bar_native.set_overlay([], [])
+        except Exception:
+            pass
 
         try:
             start_dt = self.start_datetime.dateTime().toPyDateTime()
@@ -1756,12 +1801,13 @@ class ModernMainWindow(QMainWindow):
             fetch_start = start_dt - timedelta(days=days_back)
             self._log(f"[Intranet] Fetch start: {fetch_start} -> {end_dt} (requested {start_dt}->{end_dt}, days_back={days_back}), line={line_id}")
 
-            try:
-                self.progress.setRange(0,0)
-                self.progress.setVisible(True)
-                self.status_label.setText("Pobieranie danych z intranetu...")
-            except Exception:
-                pass
+            if show_progress:
+                try:
+                    self.progress.setRange(0, 0)
+                    self.progress.setVisible(True)
+                    self.status_label.setText("Pobieranie danych z intranetu...")
+                except Exception:
+                    pass
             excl_str = self.settings.value("intranet_exclude_machines", DEFAULT_INTRANET_EXCLUDES, type=str)
             if not excl_str:
                 excl_str = DEFAULT_INTRANET_EXCLUDES
@@ -1771,6 +1817,13 @@ class ModernMainWindow(QMainWindow):
             self.intra_worker.finished.connect(self._on_intranet_ready)
             self.intra_worker.error.connect(self._on_intranet_error)
             self.intra_worker.start()
+            try:
+                if self._is_worker_running('a_worker'):
+                    self._update_thread_state('Wątki: analiza + intranet')
+                else:
+                    self._update_thread_state('Wątki: intranet')
+            except Exception:
+                pass
         except Exception as ex:
             self._log(f"[Intranet] Skipping overlay: {ex}")
 
@@ -1867,8 +1920,17 @@ class ModernMainWindow(QMainWindow):
             self._log(f"[Intranet] Overlay error: {ex}")
 
         try:
-            self.progress.setVisible(False)
-            self.status_label.setText("Gotowy")
+            if not self._is_worker_running('a_worker') and not self._is_worker_running('worker'):
+                self.progress.setVisible(False)
+                self.status_label.setText("Gotowy")
+                self._update_thread_state('Wątki: bezczynne')
+            else:
+                if self._is_worker_running('a_worker'):
+                    self._update_thread_state('Wątki: analiza')
+        except Exception:
+            pass
+        try:
+            self.intra_worker = None
         except Exception:
             pass
     def _populate_intranet_filters(self):
@@ -1916,8 +1978,17 @@ class ModernMainWindow(QMainWindow):
     def _on_intranet_error(self, err: str):
         self._log(f"[Intranet] Błąd pobierania: {err}. Pomijam overlay.")
         try:
-            self.progress.setVisible(False)
-            self.status_label.setText("Gotowy")
+            if not self._is_worker_running('a_worker') and not self._is_worker_running('worker'):
+                self.progress.setVisible(False)
+                self.status_label.setText("Gotowy")
+                self._update_thread_state('Wątki: bezczynne')
+            else:
+                if self._is_worker_running('a_worker'):
+                    self._update_thread_state('Wątki: analiza')
+        except Exception:
+            pass
+        try:
+            self.intra_worker = None
         except Exception:
             pass
     def _make_color_icon(self, color: QColor, size: int = 14) -> QIcon:
@@ -1979,6 +2050,13 @@ class ModernMainWindow(QMainWindow):
             p.drawLine(tip, QPointF(tip.x(), tip.y() + size * 0.12))
         p.end()
         return QIcon(pm)
+
+    def _is_worker_running(self, attr: str) -> bool:
+        try:
+            worker = getattr(self, attr, None)
+            return bool(worker is not None and hasattr(worker, 'isRunning') and worker.isRunning())
+        except Exception:
+            return False
 
     def _update_thread_state(self, text: str):
         try:
@@ -2058,10 +2136,25 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             pass
         self.a_worker.start()
+        try:
+            self._start_intranet_fetch(show_progress=False)
+        except Exception:
+            pass
 
     def _on_analysis_error(self, err: str):
-        self.progress.setVisible(False)
-        self.status_label.setText("Błąd analizy")
+        if self._is_worker_running('intra_worker'):
+            self.status_label.setText("Błąd analizy (trwa pobieranie Intranetu)")
+            try:
+                self._update_thread_state('Wątki: intranet')
+            except Exception:
+                pass
+        else:
+            self.progress.setVisible(False)
+            self.status_label.setText("Błąd analizy")
+            try:
+                self._update_thread_state('Wątki: bezczynne')
+            except Exception:
+                pass
         self.analysis_run_btn.setEnabled(True)
         QMessageBox.critical(self, "Błąd analizy", err)
         try:
@@ -2075,8 +2168,19 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             pass
     def _on_analysis_finished(self, records: list):
-        self.progress.setVisible(False)
-        self.status_label.setText("Analiza zakończona")
+        if self._is_worker_running('intra_worker'):
+            self.status_label.setText("Analiza zakończona (trwa pobieranie Intranetu)")
+            try:
+                self._update_thread_state('Wątki: intranet')
+            except Exception:
+                pass
+        else:
+            self.progress.setVisible(False)
+            self.status_label.setText("Analiza zakończona")
+            try:
+                self._update_thread_state('Wątki: bezczynne')
+            except Exception:
+                pass
         self.analysis_run_btn.setEnabled(True)
         try:
             end = datetime.now()
