@@ -7,8 +7,43 @@ import re
 from typing import Iterable, List, Tuple
 
 
-def list_mapped_network_drives() -> List[Tuple[str, str]]:
-    """Return list of ``(unc_prefix, drive_letter)`` for mapped network drives."""
+def _split_unc(entry: str) -> List[str]:
+    replaced = entry.replace("/", "\\")
+    while replaced.startswith("\\"):
+        replaced = replaced[1:]
+    parts = [part for part in replaced.split("\\") if part]
+    return parts
+
+
+def _core_unc(entry: str) -> str:
+    parts = _split_unc(entry)
+    if len(parts) >= 2:
+        return (parts[0] + "\\" + parts[1]).lower()
+    return parts[0].lower() if parts else ""
+
+
+def _core_and_rest(entry: str) -> tuple[str, str]:
+    parts = _split_unc(entry)
+    if len(parts) >= 2:
+        core = (parts[0] + "\\" + parts[1]).lower()
+        rest = "\\".join(parts[2:])
+        return core, rest
+    if parts:
+        return parts[0].lower(), ""
+    return "", ""
+
+
+def extract_unc_share(entry: str) -> str:
+    """Return ``\\\\host\\share`` for a UNC path or an empty string when invalid."""
+
+    parts = _split_unc(entry)
+    if len(parts) >= 2:
+        return f"\\\\{parts[0]}\\{parts[1]}"
+    return ""
+
+
+def list_mapped_network_drives() -> List[Tuple[str, str, str]]:
+    """Return list of ``(unc_prefix, drive_letter, raw_unc)`` for mapped network drives."""
 
     mappings: List[Tuple[str, str]] = []
 
@@ -47,17 +82,13 @@ def list_mapped_network_drives() -> List[Tuple[str, str]]:
         except Exception:
             pass
 
-    def _normalized(mapping: Iterable[Tuple[str, str]]) -> List[Tuple[str, str]]:
-        def _core_unc(entry: str) -> str:
-            s = entry.replace("/", "\\")
-            while s.startswith("\\"):
-                s = s[1:]
-            parts = s.split("\\", 2)
-            if len(parts) >= 2:
-                return (parts[0] + "\\" + parts[1]).lower()
-            return s.lower()
-
-        normalised = [(_core_unc(unc), drv.upper()) for unc, drv in mapping]
+    def _normalized(mapping: Iterable[Tuple[str, str]]) -> List[Tuple[str, str, str]]:
+        normalised: List[Tuple[str, str, str]] = []
+        for unc, drv in mapping:
+            core = _core_unc(unc)
+            if not core:
+                continue
+            normalised.append((core, drv.upper(), extract_unc_share(unc) or unc))
         normalised.sort(key=lambda item: len(item[0]), reverse=True)
         return normalised
 
@@ -71,25 +102,36 @@ def map_unc_to_drive_if_possible(path: str) -> str:
         return path
 
     try:
-        def _core_unc(entry: str) -> tuple[str, str]:
-            replaced = entry.replace("/", "\\")
-            while replaced.startswith("\\"):
-                replaced = replaced[1:]
-            parts = replaced.split("\\", 2)
-            if len(parts) >= 2:
-                core = (parts[0] + "\\" + parts[1]).lower()
-                rest = parts[2] if len(parts) > 2 else ""
-                return core, rest
-            return replaced.lower(), ""
-
-        core, rest = _core_unc(path)
-        for unc_core, drive in list_mapped_network_drives():
+        core, rest = _core_and_rest(path)
+        if not core:
+            return path
+        for unc_core, drive, _ in list_mapped_network_drives():
             if core == unc_core:
                 remainder = rest.lstrip("\\/")
                 return drive + ("\\" + remainder if remainder else "")
     except Exception:
         pass
     return path
+
+
+def map_network_drive(unc_path: str, drive_letter: str, persistent: bool = True) -> bool:
+    """Map ``unc_path`` to ``drive_letter`` using ``net use`` on Windows."""
+
+    if not unc_path or not drive_letter:
+        return False
+    if os.name != "nt":
+        return False
+    try:
+        import subprocess
+
+        letter = drive_letter.rstrip(":").upper()
+        cmd = f'net use {letter}: "{unc_path}"'
+        if persistent:
+            cmd += " /persistent:yes"
+        subprocess.check_call(cmd, shell=True)
+        return True
+    except Exception:
+        return False
 
 
 def network_path_available(path: str) -> bool:
@@ -104,7 +146,9 @@ def network_path_available(path: str) -> bool:
 
 
 __all__ = [
+    "extract_unc_share",
     "list_mapped_network_drives",
     "map_unc_to_drive_if_possible",
+    "map_network_drive",
     "network_path_available",
 ]
