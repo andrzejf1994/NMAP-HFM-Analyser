@@ -1,4 +1,4 @@
-"""Legacy entrypoint retained for backwards compatibility."""
+"""CLI entry point for running the HFM Analyzer application."""
 
 from hfm_analyzer.app import main
 
