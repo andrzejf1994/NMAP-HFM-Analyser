@@ -48,14 +48,16 @@ def list_mapped_network_drives() -> List[Tuple[str, str]]:
             pass
 
     def _normalized(mapping: Iterable[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        def _split_unc(entry: str) -> List[str]:
+            replaced = entry.replace("/", "\\")
+            parts = [part for part in replaced.split("\\") if part]
+            return parts
+
         def _core_unc(entry: str) -> str:
-            s = entry.replace("/", "\\")
-            while s.startswith("\\"):
-                s = s[1:]
-            parts = s.split("\\", 2)
+            parts = _split_unc(entry)
             if len(parts) >= 2:
                 return (parts[0] + "\\" + parts[1]).lower()
-            return s.lower()
+            return (parts[0].lower() if parts else "")
 
         normalised = [(_core_unc(unc), drv.upper()) for unc, drv in mapping]
         normalised.sort(key=lambda item: len(item[0]), reverse=True)
@@ -71,18 +73,26 @@ def map_unc_to_drive_if_possible(path: str) -> str:
         return path
 
     try:
-        def _core_unc(entry: str) -> tuple[str, str]:
+        def _split_unc(entry: str) -> List[str]:
             replaced = entry.replace("/", "\\")
             while replaced.startswith("\\"):
                 replaced = replaced[1:]
-            parts = replaced.split("\\", 2)
+            parts = [part for part in replaced.split("\\") if part]
+            return parts
+
+        def _core_unc(entry: str) -> tuple[str, str]:
+            parts = _split_unc(entry)
             if len(parts) >= 2:
                 core = (parts[0] + "\\" + parts[1]).lower()
-                rest = parts[2] if len(parts) > 2 else ""
+                rest = "\\".join(parts[2:])
                 return core, rest
-            return replaced.lower(), ""
+            if parts:
+                return parts[0].lower(), ""
+            return "", ""
 
         core, rest = _core_unc(path)
+        if not core:
+            return path
         for unc_core, drive in list_mapped_network_drives():
             if core == unc_core:
                 remainder = rest.lstrip("\\/")
