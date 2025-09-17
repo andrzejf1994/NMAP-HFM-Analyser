@@ -1,6 +1,0 @@
-"""Legacy entrypoint retained for backwards compatibility."""
-
-from hfm_analyzer.app import main
-
-if __name__ == "__main__":
-    main()
