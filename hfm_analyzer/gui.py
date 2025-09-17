@@ -19,6 +19,7 @@ from PyQt5.QtCore import (
     QSettings,
     QPointF,
     QRectF,
+    QSize
 )
 from PyQt5.QtGui import (
     QBrush,
