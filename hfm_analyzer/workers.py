@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from .constants import INDEX_PARAM_NAMES, PARAM_NAMES
 from .models import FoundFile, IndexSnapshot, ParamSnapshot
 
 try:  # Optional acceleration when lxml is available.
@@ -68,6 +69,9 @@ class ScanWorker(QThread):
             self.finished.emit(found)
         except Exception as exc:  # pragma: no cover - defensive programming
             self.error.emit(str(exc))
+
+
+STEP_SPEED_LABEL = "Step Speed"
 
 
 class AnalyzeWorker(QThread):
@@ -139,6 +143,50 @@ class AnalyzeWorker(QThread):
             root = ET.parse(found_file.path).getroot()
             iter_items = root.iter
 
+        def _parse_float(raw: str | None) -> float | None:
+            if raw is None:
+                return None
+            text = raw.strip().replace(",", ".")
+            if not text:
+                return None
+            try:
+                return float(text)
+            except Exception:
+                return None
+
+        def _parse_bool(raw: str | None) -> bool:
+            if raw is None:
+                return False
+            text = raw.strip().lower()
+            if not text:
+                return False
+            if text in {"1", "true", "tak", "yes", "y"}:
+                return True
+            if text in {"0", "false", "nie", "no", "n"}:
+                return False
+            try:
+                return bool(int(text))
+            except Exception:
+                return text not in {"0", "false"}
+
+        def _parse_mode(raw: str | None) -> str:
+            if raw is None:
+                return "ABS"
+            text = raw.strip().lower()
+            if not text:
+                return "ABS"
+            try:
+                value = int(text)
+            except Exception:
+                value = None
+            if value is not None:
+                return "REL" if value == 1 else "ABS"
+            if text in {"rel", "relative", "r"}:
+                return "REL"
+            if text in {"abs", "absolute", "a"}:
+                return "ABS"
+            return "REL" if text not in {"0", "false"} else "ABS"
+
         program = ""
         for item in iter_items("Item"):
             if item.get("name") == "sgFileName":
@@ -174,37 +222,77 @@ class AnalyzeWorker(QThread):
             for struct in a_kin.iter("Struct"):
                 struct_idx = struct.get("idx") or ""
                 pin_name = pin_map.get(struct_idx, "")
+
                 steps_arr = None
-                for array in struct.iter("Array"):
+                for array in struct.findall("Array"):
                     if array.get("name") == "Step":
                         steps_arr = array
                         break
                 if steps_arr is None:
                     continue
 
-                steps = list(steps_arr.iter("Struct"))
-                for step_index, step_el in enumerate(steps, start=1):
-                    r_pos = None
-                    bo_ax = None
-
-                    for array in step_el.iter("Array"):
+                for step_index, step_el in enumerate(steps_arr.findall("Struct"), start=1):
+                    array_map: dict[str, ET.Element] = {}
+                    for array in step_el.findall("Array"):
                         name = array.get("name")
-                        if name == "rPos":
-                            r_pos = array
-                        elif name == "boAxIncluded":
-                            bo_ax = array
-                            break
-                    if r_pos is None or bo_ax is None:
+                        if not name:
+                            continue
+                        array_map[name] = array
+
+                    r_pos = array_map.get("rPos")
+                    if r_pos is None:
                         continue
-                    pos_items = list(r_pos.iter("Item"))
-                    inc_items = list(bo_ax.iter("Item"))
-                            try:
-                                value = float(pos_items[idx].get("value") or "0")
-                            except Exception:
-                                value = 0.0
+                    bo_ax = (
+                        array_map.get("boAxIncluded")
+                        or array_map.get("boAxisIncluded")
+                        or array_map.get("boAxInclude")
+                    )
+                    bo_mode = (
+                        array_map.get("boAxModeRel")
+                        or array_map.get("boModeRel")
+                        or array_map.get("boMode")
+                    )
+
+                    pos_items = list(r_pos.findall("Item"))
+                    inc_items = list(bo_ax.findall("Item")) if bo_ax is not None else []
+                    mode_items = list(bo_mode.findall("Item")) if bo_mode is not None else []
+
+                    values: dict[str, float | None] = {name: None for name in PARAM_NAMES}
+                    included: dict[str, bool] = {name: False for name in PARAM_NAMES}
+                    modes: dict[str, str] = {name: "ABS" for name in PARAM_NAMES}
+
+                    for idx, name in enumerate(PARAM_NAMES):
+                        if idx < len(pos_items):
+                            values[name] = _parse_float(pos_items[idx].get("value"))
+                        if idx < len(inc_items):
+                            included[name] = _parse_bool(inc_items[idx].get("value"))
+                        if idx < len(mode_items):
+                            modes[name] = _parse_mode(mode_items[idx].get("value"))
+
+                    step_speed = None
+                    speed_arrays = [
+                        array_map.get("rStepSpeed"),
+                        array_map.get("StepSpeed"),
+                        array_map.get("rSpeed"),
+                        array_map.get("rVel"),
+                    ]
+                    for speed_arr in speed_arrays:
+                        if speed_arr is None:
+                            continue
+                        speed_items = list(speed_arr.findall("Item"))
+                        if not speed_items:
+                            continue
+                        step_speed = _parse_float(speed_items[0].get("value"))
+                        if step_speed is not None:
+                            break
+                    if step_speed is None:
+                        for item in step_el.findall("Item"):
+                            name = item.get("name")
+                            if name in {"rStepSpeed", "StepSpeed", "rSpeed"}:
+                                step_speed = _parse_float(item.get("value"))
                                 break
-                    except Exception:
-                        step_speed = None
+
+                    values[STEP_SPEED_LABEL] = step_speed
 
                     param_records.append(
                         ParamSnapshot(
@@ -214,6 +302,9 @@ class AnalyzeWorker(QThread):
                             table=struct_idx,
                             pin=pin_name,
                             step=step_index,
+                            values=values,
+                            included=included,
+                            modes=modes,
                             path=found_file.path,
                         )
                     )
@@ -222,39 +313,40 @@ class AnalyzeWorker(QThread):
             for struct in a_index.iter("Struct"):
                 struct_idx = struct.get("idx") or ""
                 steps_arr = None
-                for array in struct.iter("Array"):
+                for array in struct.findall("Array"):
                     if array.get("name") == "Step":
                         steps_arr = array
                         break
                 if steps_arr is None:
                     continue
 
-                for fallback_idx, step_el in enumerate(steps_arr.iter("Struct")):
+                for fallback_idx, step_el in enumerate(steps_arr.findall("Struct")):
                     step_idx_attr = step_el.get("idx")
                     try:
                         step_number = int(step_idx_attr) if step_idx_attr is not None else fallback_idx
                     except Exception:
                         step_number = fallback_idx
 
-                    r_pos = None
-                    bo_ax = None
-                    bo_mode = None
-                    for array in step_el.iter("Array"):
+                    array_map: dict[str, ET.Element] = {}
+                    for array in step_el.findall("Array"):
                         name = array.get("name")
-                        if name == "rPos":
-                            r_pos = array
-                        elif name == "boAxIncluded":
-                            bo_ax = array
-                        elif name == "boModeRel":
-                            bo_mode = array
-                        if r_pos is not None and bo_ax is not None and bo_mode is not None:
-                            break
-                    if r_pos is None or bo_ax is None or bo_mode is None:
-                        continue
+                        if not name:
+                            continue
+                        array_map[name] = array
 
-                    pos_items = list(r_pos.iter("Item"))
-                    inc_items = list(bo_ax.iter("Item"))
-                    mode_items = list(bo_mode.iter("Item"))
+                    r_pos = array_map.get("rPos")
+                    bo_ax = (
+                        array_map.get("boAxIncluded")
+                        or array_map.get("boAxisIncluded")
+                        or array_map.get("boAxInclude")
+                    )
+                    if r_pos is None or bo_ax is None:
+                        continue
+                    bo_mode = array_map.get("boModeRel") or array_map.get("boAxModeRel")
+
+                    pos_items = list(r_pos.findall("Item"))
+                    inc_items = list(bo_ax.findall("Item"))
+                    mode_items = list(bo_mode.findall("Item")) if bo_mode is not None else []
 
                     values: dict[str, float] = {}
                     included: dict[str, bool] = {}
@@ -264,40 +356,28 @@ class AnalyzeWorker(QThread):
                     for idx, name in enumerate(INDEX_PARAM_NAMES):
                         include = False
                         if idx < len(inc_items):
-                            try:
-                                include = bool(int((inc_items[idx].get("value") or "0")))
-                            except Exception:
-                                include = False
+                            include = _parse_bool(inc_items[idx].get("value"))
                         included[name] = include
                         if include:
                             any_enabled = True
 
-                        value = 0.0
-                        if idx < len(pos_items):
-                            try:
-                                value = float(pos_items[idx].get("value") or "0")
-                            except Exception:
-                                value = 0.0
-                        values[name] = value
+                        parsed_value = (
+                            _parse_float(pos_items[idx].get("value")) if idx < len(pos_items) else None
+                        )
+                        values[name] = parsed_value if parsed_value is not None else 0.0
 
-                        mode_val = 0
+                        mode = "ABS"
                         if idx < len(mode_items):
-                            try:
-                                mode_val = int(mode_items[idx].get("value") or "0")
-                            except Exception:
-                                mode_val = 0
-                        modes[name] = "REL" if mode_val == 1 else "ABS"
+                            mode = _parse_mode(mode_items[idx].get("value"))
+                        modes[name] = mode
 
                     if not any_enabled:
                         continue
 
                     override = None
-                    for item in step_el.iter("Item"):
+                    for item in step_el.findall("Item"):
                         if item.get("name") == "iOverride":
-                            try:
-                                override = float((item.get("value") or "0").strip())
-                            except Exception:
-                                override = None
+                            override = _parse_float(item.get("value"))
                             break
 
                     index_records.append(
