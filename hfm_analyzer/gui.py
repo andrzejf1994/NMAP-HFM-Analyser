@@ -2387,22 +2387,25 @@ class ModernMainWindow(QMainWindow):
                             changed = abs(curr_speed - prev_speed) > 1e-12
                         except Exception:
                             changed = curr_speed != prev_speed
-                    if changed:
-                        prev_txt = self._format_override_value(prev_speed)
-                        curr_txt = self._format_override_value(curr_speed)
-                        changed_cols[name] = f"{prev_txt} -> {curr_txt}"
-                        if (
-                            prev_speed is not None
-                            and curr_speed is not None
-                            and abs(prev_speed) > 1e-12
-                        ):
-                            pct = abs((curr_speed - prev_speed) / prev_speed) * 100.0
-                            large_cols[name] = (pct >= threshold_pct)
-                        else:
-                            large_cols[name] = False
-                    else:
-                        changed_cols[name] = ""
-                        large_cols[name] = False
+
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+                    if not changed:
+                        continue
+
+                    prev_txt = self._format_override_value(prev_speed)
+                    curr_txt = self._format_override_value(curr_speed)
+                    if prev_txt == curr_txt:
+                        continue
+
+                    changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                    if (
+                        prev_speed is not None
+                        and curr_speed is not None
+                        and abs(prev_speed) > 1e-12
+                    ):
+                        pct = abs((curr_speed - prev_speed) / prev_speed) * 100.0
+                        large_cols[name] = (pct >= threshold_pct)
                     continue
 
                 if name not in PARAM_NAMES:
@@ -2426,18 +2429,20 @@ class ModernMainWindow(QMainWindow):
                 mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                 include_changed = curr_include != prev_include
 
-                if value_changed or mode_changed or include_changed:
-                    prev_txt = self._format_index_value(prev_include, prev_value, prev_mode)
-                    curr_txt = self._format_index_value(curr_include, curr_value, curr_mode)
-                    changed_cols[name] = f"{prev_txt} -> {curr_txt}"
-                    if prev_include and curr_include and abs(prev_value) > 1e-12:
-                        pct = abs((curr_value - prev_value) / prev_value) * 100.0
-                        large_cols[name] = (pct >= threshold_pct)
-                    else:
-                        large_cols[name] = False
-                else:
-                    changed_cols[name] = ""
-                    large_cols[name] = False
+                changed_cols[name] = ""
+                large_cols[name] = False
+                if not (value_changed or mode_changed or include_changed):
+                    continue
+
+                prev_txt = self._format_index_value(prev_include, prev_value, prev_mode)
+                curr_txt = self._format_index_value(curr_include, curr_value, curr_mode)
+                if prev_txt == curr_txt:
+                    continue
+
+                changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                if prev_include and curr_include and abs(prev_value) > 1e-12:
+                    pct = abs((curr_value - prev_value) / prev_value) * 100.0
+                    large_cols[name] = (pct >= threshold_pct)
             if any(changed_cols.values()):
                 row = {
                     'dt': s.dt,
@@ -2457,6 +2462,7 @@ class ModernMainWindow(QMainWindow):
             last_prog[key] = s.program
 
         events.sort(key=lambda x: (x['dt'], x['machine'], x.get('pin', ''), x['step']))
+        events = self._deduplicate_param_events(events)
         prog_events.sort(key=lambda x: (x['dt'], x['machine']))
         self.analysis_events = events
         self.program_events = prog_events
@@ -2687,20 +2693,24 @@ class ModernMainWindow(QMainWindow):
                 if name == INDEX_OVERRIDE_LABEL:
                     prev_val = prev.override
                     curr_val = s.override
-                    changed = False
                     if prev_val is None and curr_val is None:
                         changed = False
                     elif prev_val is None or curr_val is None:
                         changed = True
                     else:
                         changed = abs(curr_val - prev_val) > 1e-12
-                    if changed:
-                        prev_txt = self._format_override_value(prev_val)
-                        curr_txt = self._format_override_value(curr_val)
-                        changed_cols[name] = f"{prev_txt} -> {curr_txt}"
-                    else:
-                        changed_cols[name] = ""
+
+                    changed_cols[name] = ""
                     large_cols[name] = False
+                    if not changed:
+                        continue
+
+                    prev_txt = self._format_override_value(prev_val)
+                    curr_txt = self._format_override_value(curr_val)
+                    if prev_txt == curr_txt:
+                        continue
+
+                    changed_cols[name] = f"{prev_txt} -> {curr_txt}"
                     continue
 
                 prev_include = bool(prev.included.get(name, False))
@@ -2719,18 +2729,20 @@ class ModernMainWindow(QMainWindow):
                 mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                 include_changed = curr_include != prev_include
 
-                if value_changed or mode_changed or include_changed:
-                    prev_txt = self._format_index_value(prev_include, prev_value, prev_mode)
-                    curr_txt = self._format_index_value(curr_include, curr_value, curr_mode)
-                    changed_cols[name] = f"{prev_txt} -> {curr_txt}"
-                    if prev_include and curr_include and abs(prev_value) > 1e-12:
-                        pct = abs((curr_value - prev_value) / prev_value) * 100.0
-                        large_cols[name] = (pct >= threshold_pct)
-                    else:
-                        large_cols[name] = False
-                else:
-                    changed_cols[name] = ""
-                    large_cols[name] = False
+                changed_cols[name] = ""
+                large_cols[name] = False
+                if not (value_changed or mode_changed or include_changed):
+                    continue
+
+                prev_txt = self._format_index_value(prev_include, prev_value, prev_mode)
+                curr_txt = self._format_index_value(curr_include, curr_value, curr_mode)
+                if prev_txt == curr_txt:
+                    continue
+
+                changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                if prev_include and curr_include and abs(prev_value) > 1e-12:
+                    pct = abs((curr_value - prev_value) / prev_value) * 100.0
+                    large_cols[name] = (pct >= threshold_pct)
 
             if any(changed_cols.values()):
                 events.append({
@@ -2747,7 +2759,54 @@ class ModernMainWindow(QMainWindow):
                 })
 
         events.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
-        return events
+        return self._deduplicate_index_events(events)
+
+    def _deduplicate_param_events(self, events: list[dict]) -> list[dict]:
+        seen: set[tuple] = set()
+        deduped: list[dict] = []
+        order = tuple(PARAM_DISPLAY_ORDER)
+        for event in events:
+            if event.get('type') != 'change':
+                deduped.append(event)
+                continue
+            cols = event.get('cols') or {}
+            key = (
+                event.get('dt'),
+                event.get('machine'),
+                event.get('program'),
+                event.get('table'),
+                event.get('pin'),
+                event.get('step'),
+                tuple((name, cols.get(name, "")) for name in order),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(event)
+        return deduped
+
+    def _deduplicate_index_events(self, events: list[dict]) -> list[dict]:
+        seen: set[tuple] = set()
+        deduped: list[dict] = []
+        order = tuple(INDEX_PARAM_DISPLAY_ORDER)
+        for event in events:
+            if event.get('type') != 'index_change':
+                deduped.append(event)
+                continue
+            cols = event.get('cols') or {}
+            key = (
+                event.get('dt'),
+                event.get('machine'),
+                event.get('program'),
+                event.get('table'),
+                event.get('step'),
+                tuple((name, cols.get(name, "")) for name in order),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(event)
+        return deduped
 
     def _fill_change_trees(self):
         try:
