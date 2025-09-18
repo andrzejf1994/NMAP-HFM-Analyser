@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import QColor, QPalette
+from PyQt5.QtGui import QColor, QPalette, QIcon
 from PyQt5.QtWidgets import QApplication
 
 from .constants import APP_NAME, APP_ORG, DEFAULT_PATH_H66_2
@@ -50,6 +51,58 @@ def apply_fusion_palette(app: QApplication) -> None:
     app.setPalette(palette)
 
 
+def _icon_search_paths() -> list[Path]:
+    """Return candidate locations for the application icon."""
+
+    candidates: list[Path] = []
+
+    # When packaged with PyInstaller ``_MEIPASS`` points to the temporary bundle
+    # directory that contains our resources.
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        base = Path(meipass)
+        candidates.append(base / "icon.ico")
+        candidates.append(base / "resources" / "icon.ico")
+
+    here = Path(__file__).resolve().parent
+    candidates.append(here / "icon.ico")
+    candidates.append(here.parent / "icon.ico")
+
+    try:
+        executable_dir = Path(sys.argv[0]).resolve().parent
+        candidates.append(executable_dir / "icon.ico")
+    except Exception:
+        pass
+
+    try:
+        candidates.append(Path.cwd() / "icon.ico")
+    except Exception:
+        pass
+
+    ordered_unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        ordered_unique.append(resolved)
+    return ordered_unique
+
+
+def _load_app_icon() -> QIcon | None:
+    """Return the application icon if it is available on disk."""
+
+    for path in _icon_search_paths():
+        if path.is_file():
+            return QIcon(str(path))
+    logging.warning("Application icon not found; continuing without a custom icon")
+    return None
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
@@ -65,6 +118,11 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setOrganizationName(APP_ORG)
     app.setApplicationName(APP_NAME)
+
+    icon = _load_app_icon()
+    if icon and not icon.isNull():
+        app.setWindowIcon(icon)
+
     apply_fusion_palette(app)
 
     settings = QSettings()
@@ -72,6 +130,8 @@ def main() -> None:
         sys.exit(0)
 
     window = ModernMainWindow(settings)
+    if icon and not icon.isNull():
+        window.setWindowIcon(icon)
     window.show()
     sys.exit(app.exec_())
 

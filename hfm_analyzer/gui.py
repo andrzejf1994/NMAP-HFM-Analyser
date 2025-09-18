@@ -712,6 +712,9 @@ class ModernMainWindow(QMainWindow):
     def __init__(self, settings: QSettings):
         super().__init__()
         self.settings = settings
+        app = QApplication.instance()
+        if app is not None and not app.windowIcon().isNull():
+            self.setWindowIcon(app.windowIcon())
         self.setWindowTitle("HFM Analyzer")
         self.setMinimumSize(1000, 680)
 
