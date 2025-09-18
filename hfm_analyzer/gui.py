@@ -83,6 +83,7 @@ from .constants import (
     DEFAULT_PATH_H66_2,
     INDEX_OVERRIDE_LABEL,
     INDEX_PARAM_DISPLAY_ORDER,
+    PARAM_NAMES,
     PARAM_DISPLAY_ORDER,
     SUMMARY_PALETTE,
 )
@@ -2702,6 +2703,19 @@ class ModernMainWindow(QMainWindow):
                     large_cols[name] = False
                     continue
 
+                prev_include = bool(prev.included.get(name, False))
+                curr_include = bool(s.included.get(name, False))
+                if not prev_include and not curr_include:
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+                    continue
+
+                prev_mode = prev.modes.get(name, 'ABS')
+                curr_mode = s.modes.get(name, 'ABS')
+                prev_value = float(prev.values.get(name, 0.0) or 0.0)
+                curr_value = float(s.values.get(name, 0.0) or 0.0)
+
+                value_changed = abs(curr_value - prev_value) > 1e-12
                 mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                 include_changed = curr_include != prev_include
 
