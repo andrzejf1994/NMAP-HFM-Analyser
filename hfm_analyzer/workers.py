@@ -9,12 +9,13 @@ import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
 import xml.etree.ElementTree as ET
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from .models import FoundFile, ParamSnapshot
+from .constants import INDEX_PARAM_NAMES, PARAM_NAMES
+from .models import FoundFile, IndexSnapshot, ParamSnapshot
 
 try:  # Optional acceleration when lxml is available.
     import lxml.etree as LET  # type: ignore
@@ -74,7 +75,7 @@ class AnalyzeWorker(QThread):
     """Parse backup XML files and extract parameter snapshots."""
 
     progress = pyqtSignal(str)
-    finished = pyqtSignal(list)
+    finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
     def __init__(self, files: Iterable[FoundFile], max_workers: int | None = None) -> None:
@@ -102,7 +103,8 @@ class AnalyzeWorker(QThread):
 
     def run(self) -> None:  # pragma: no cover - executed in background thread
         try:
-            results: list[ParamSnapshot] = []
+            param_results: list[ParamSnapshot] = []
+            index_results: list[IndexSnapshot] = []
             total = len(self.files)
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {executor.submit(self._analyze_file, file): file for file in self.files}
@@ -114,19 +116,22 @@ class AnalyzeWorker(QThread):
                         f"Analizuję plik {done}/{total}: {os.path.basename(found_file.path)}"
                     )
                     try:
-                        recs = future.result()
-                        if recs:
-                            results.extend(recs)
+                        param_recs, index_recs = future.result()
+                        if param_recs:
+                            param_results.extend(param_recs)
+                        if index_recs:
+                            index_results.extend(index_recs)
                     except Exception:
                         logging.getLogger(__name__).exception("[AnalyzeWorker] błąd podczas analizy pliku")
                         continue
-            self.finished.emit(results)
+            self.finished.emit({'params': param_results, 'index': index_results})
         except Exception as exc:  # pragma: no cover - defensive programming
             self.error.emit(str(exc))
 
     # The parsing logic is intentionally kept private because it is always executed in worker threads.
-    def _analyze_file(self, found_file: FoundFile) -> list[ParamSnapshot]:
-        records: list[ParamSnapshot] = []
+    def _analyze_file(self, found_file: FoundFile) -> Tuple[list[ParamSnapshot], list[IndexSnapshot]]:
+        param_records: list[ParamSnapshot] = []
+        index_records: list[IndexSnapshot] = []
         if LET is not None:
             parser = LET.XMLParser(huge_tree=True, recover=True)  # type: ignore[arg-type]
             root = LET.parse(found_file.path, parser=parser).getroot()  # type: ignore[call-arg]
@@ -144,13 +149,16 @@ class AnalyzeWorker(QThread):
         pin_map: dict[str, str] = {}
         a_hair = None
         a_kin = None
+        a_index = None
         for array in iter_items("Array"):
             name = array.get("name")
             if name == "aHairPinType" and a_hair is None:
                 a_hair = array
             elif name == "aKinTable" and a_kin is None:
                 a_kin = array
-            if a_hair is not None and a_kin is not None:
+            elif name == "aIndexTable" and a_index is None:
+                a_index = array
+            if a_hair is not None and a_kin is not None and a_index is not None:
                 break
 
         if a_hair is not None:
@@ -163,88 +171,199 @@ class AnalyzeWorker(QThread):
                         break
                 pin_map[idx] = pin
 
-        if a_kin is None:
-            return records
-
-        for struct in a_kin.iter("Struct"):
-            struct_idx = struct.get("idx") or ""
-            pin_name = pin_map.get(struct_idx, "")
-            steps_arr = None
-            for array in struct.iter("Array"):
-                if array.get("name") == "Step":
-                    steps_arr = array
-                    break
-            if steps_arr is None:
-                continue
-
-            steps = list(steps_arr.iter("Struct"))
-            for step_index, step_el in enumerate(steps, start=1):
-                r_pos = None
-                bo_ax = None
-                for array in step_el.iter("Array"):
-                    name = array.get("name")
-                    if name == "rPos":
-                        r_pos = array
-                    elif name == "boAxIncluded":
-                        bo_ax = array
-                    if r_pos is not None and bo_ax is not None:
+        if a_kin is not None:
+            for struct in a_kin.iter("Struct"):
+                struct_idx = struct.get("idx") or ""
+                pin_name = pin_map.get(struct_idx, "")
+                steps_arr = None
+                for array in struct.iter("Array"):
+                    if array.get("name") == "Step":
+                        steps_arr = array
                         break
-                if r_pos is None or bo_ax is None:
-                    continue
-                pos_items = list(r_pos.iter("Item"))
-                inc_items = list(bo_ax.iter("Item"))
-                values = [0.0] * 7
-                any_non_zero = False
-                for idx in range(7):
-                    include = 0
-                    if idx < len(inc_items):
-                        try:
-                            include = int((inc_items[idx].get("value") or "0"))
-                        except Exception:
-                            include = 0
-                    if include == 1 and idx < len(pos_items):
-                        try:
-                            value = float(pos_items[idx].get("value") or "0")
-                        except Exception:
-                            value = 0.0
-                        values[idx] = value
-                        if abs(value) > 1e-12:
-                            any_non_zero = True
-                if not any_non_zero:
+                if steps_arr is None:
                     continue
 
-                step_speed = None
-                try:
+                steps = list(steps_arr.iter("Struct"))
+                for step_index, step_el in enumerate(steps, start=1):
+                    r_pos = None
+                    bo_ax = None
+                    bo_mode = None
+                    for array in step_el.iter("Array"):
+                        name = array.get("name")
+                        if name == "rPos":
+                            r_pos = array
+                        elif name == "boAxIncluded":
+                            bo_ax = array
+                        elif name == "boModeRel":
+                            bo_mode = array
+                        if r_pos is not None and bo_ax is not None and bo_mode is not None:
+                            break
+                    if r_pos is None or bo_ax is None:
+                        continue
+                    pos_items = list(r_pos.iter("Item"))
+                    inc_items = list(bo_ax.iter("Item"))
+                    mode_items = list(bo_mode.iter("Item")) if bo_mode is not None else []
+
+                    values: dict[str, float | None] = {}
+                    included: dict[str, bool] = {}
+                    modes: dict[str, str] = {}
+                    for idx, param_name in enumerate(PARAM_NAMES):
+                        include_flag = False
+                        if idx < len(inc_items):
+                            try:
+                                include_flag = bool(int((inc_items[idx].get("value") or "0")))
+                            except Exception:
+                                include_flag = False
+                        included[param_name] = include_flag
+
+                        value = 0.0
+                        if idx < len(pos_items):
+                            try:
+                                value = float(pos_items[idx].get("value") or "0")
+                            except Exception:
+                                value = 0.0
+                        values[param_name] = value
+
+                        mode_val = 0
+                        if idx < len(mode_items):
+                            try:
+                                mode_val = int(mode_items[idx].get("value") or "0")
+                            except Exception:
+                                mode_val = 0
+                        modes[param_name] = "REL" if mode_val == 1 else "ABS"
+
+                    step_speed: float | None = None
+                    try:
+                        for item in step_el.iter("Item"):
+                            if item.get("name") == "iOverride":
+                                try:
+                                    step_speed = float((item.get("value") or "0").strip())
+                                except Exception:
+                                    step_speed = None
+                                break
+                    except Exception:
+                        step_speed = None
+
+                    if step_speed is not None:
+                        values["Step Speed"] = step_speed
+                    else:
+                        values["Step Speed"] = None
+                    included["Step Speed"] = step_speed is not None
+                    modes["Step Speed"] = "ABS"
+
+                    param_records.append(
+                        ParamSnapshot(
+                            dt=found_file.dt,
+                            machine=found_file.machine,
+                            program=program,
+                            table=struct_idx,
+                            pin=pin_name,
+                            step=step_index,
+                            values=values,
+                            included=included,
+                            modes=modes,
+                            path=found_file.path,
+                        )
+                    )
+
+        if a_index is not None:
+            for struct in a_index.iter("Struct"):
+                struct_idx = struct.get("idx") or ""
+                steps_arr = None
+                for array in struct.iter("Array"):
+                    if array.get("name") == "Step":
+                        steps_arr = array
+                        break
+                if steps_arr is None:
+                    continue
+
+                for fallback_idx, step_el in enumerate(steps_arr.iter("Struct")):
+                    step_idx_attr = step_el.get("idx")
+                    try:
+                        step_number = int(step_idx_attr) if step_idx_attr is not None else fallback_idx
+                    except Exception:
+                        step_number = fallback_idx
+
+                    r_pos = None
+                    bo_ax = None
+                    bo_mode = None
+                    for array in step_el.iter("Array"):
+                        name = array.get("name")
+                        if name == "rPos":
+                            r_pos = array
+                        elif name == "boAxIncluded":
+                            bo_ax = array
+                        elif name == "boModeRel":
+                            bo_mode = array
+                        if r_pos is not None and bo_ax is not None and bo_mode is not None:
+                            break
+                    if r_pos is None or bo_ax is None or bo_mode is None:
+                        continue
+
+                    pos_items = list(r_pos.iter("Item"))
+                    inc_items = list(bo_ax.iter("Item"))
+                    mode_items = list(bo_mode.iter("Item"))
+
+                    values: dict[str, float] = {}
+                    included: dict[str, bool] = {}
+                    modes: dict[str, str] = {}
+                    any_enabled = False
+
+                    for idx, name in enumerate(INDEX_PARAM_NAMES):
+                        include = False
+                        if idx < len(inc_items):
+                            try:
+                                include = bool(int((inc_items[idx].get("value") or "0")))
+                            except Exception:
+                                include = False
+                        included[name] = include
+                        if include:
+                            any_enabled = True
+
+                        value = 0.0
+                        if idx < len(pos_items):
+                            try:
+                                value = float(pos_items[idx].get("value") or "0")
+                            except Exception:
+                                value = 0.0
+                        values[name] = value
+
+                        mode_val = 0
+                        if idx < len(mode_items):
+                            try:
+                                mode_val = int(mode_items[idx].get("value") or "0")
+                            except Exception:
+                                mode_val = 0
+                        modes[name] = "REL" if mode_val == 1 else "ABS"
+
+                    if not any_enabled:
+                        continue
+
+                    override = None
                     for item in step_el.iter("Item"):
                         if item.get("name") == "iOverride":
-                            step_speed = float((item.get("value") or "0").strip())
+                            try:
+                                override = float((item.get("value") or "0").strip())
+                            except Exception:
+                                override = None
                             break
-                except Exception:
-                    step_speed = None
 
-                record_values = {
-                    "X": values[0],
-                    "Y": values[1],
-                    "Angle": values[2],
-                    "Rotation": values[3],
-                    "Nose Translation": values[4],
-                    "Nose Locking": values[5],
-                    "Step Speed": step_speed if step_speed is not None else 0.0,
-                    "Wire Feeding": values[6],
-                }
-                records.append(
-                    ParamSnapshot(
-                        dt=found_file.dt,
-                        machine=found_file.machine,
-                        program=program,
-                        table=struct_idx,
-                        pin=pin_name,
-                        step=step_index,
-                        values=record_values,
-                        path=found_file.path,
+                    index_records.append(
+                        IndexSnapshot(
+                            dt=found_file.dt,
+                            machine=found_file.machine,
+                            program=program,
+                            table=struct_idx,
+                            step=step_number,
+                            values=values,
+                            included=included,
+                            modes=modes,
+                            override=override,
+                            path=found_file.path,
+                        )
                     )
-                )
-        return records
+
+        return param_records, index_records
 
 
 class IntranetWorker(QThread):

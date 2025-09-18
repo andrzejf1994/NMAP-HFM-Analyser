@@ -81,10 +81,13 @@ from .constants import (
     DEFAULT_INTRANET_EXCLUDES,
     DEFAULT_PATH_EVO,
     DEFAULT_PATH_H66_2,
+    INDEX_OVERRIDE_LABEL,
+    INDEX_PARAM_DISPLAY_ORDER,
+    PARAM_NAMES,
     PARAM_DISPLAY_ORDER,
     SUMMARY_PALETTE,
 )
-from .models import FoundFile, ParamSnapshot
+from .models import FoundFile, IndexSnapshot, ParamSnapshot
 from .utils import (
     extract_unc_share,
     list_mapped_network_drives,
@@ -1171,6 +1174,53 @@ class ModernMainWindow(QMainWindow):
 
         self.tabs.addTab(self.analysis_tab, "Zmiany Parametrów")
 
+        self.index_tab = QWidget()
+        idx_layout = QVBoxLayout(self.index_tab)
+        idx_layout.setContentsMargins(12, 12, 12, 12)
+        idx_layout.setSpacing(8)
+
+        idx_filt = QHBoxLayout()
+        idx_filt.setSpacing(8)
+        self.idx_f_machine = QComboBox()
+        self.idx_f_machine.currentIndexChanged.connect(self._apply_index_filters)
+        self.idx_f_table = QComboBox()
+        self.idx_f_table.currentIndexChanged.connect(self._apply_index_filters)
+        self.idx_f_step = QComboBox()
+        self.idx_f_step.currentIndexChanged.connect(self._apply_index_filters)
+        self.idx_f_param = QComboBox()
+        self.idx_f_param.currentIndexChanged.connect(self._apply_index_filters)
+
+        idx_filt.addWidget(_label("Maszyna:"))
+        idx_filt.addWidget(self.idx_f_machine)
+        idx_filt.addWidget(_label("Tabela:"))
+        idx_filt.addWidget(self.idx_f_table)
+        idx_filt.addWidget(_label("Step:"))
+        idx_filt.addWidget(self.idx_f_step)
+        idx_filt.addWidget(_label("Parametr:"))
+        idx_filt.addWidget(self.idx_f_param)
+        idx_filt.addStretch(1)
+
+        idx_export_btn = QPushButton("Eksport CSV")
+        idx_export_btn.clicked.connect(self._export_index_csv)
+        idx_filt.addWidget(idx_export_btn)
+
+        idx_layout.addLayout(idx_filt)
+
+        idx_params = INDEX_PARAM_DISPLAY_ORDER
+        idx_fixed_cols = ["Data", "Czas", "Maszyna", "Program", "Tabela", "Step"]
+        idx_total_cols = len(idx_fixed_cols) + len(idx_params) + 1
+        self.index_table = QTableWidget(0, idx_total_cols)
+        self.index_table.setHorizontalHeaderLabels(idx_fixed_cols + idx_params + ["Ścieżka"])
+        self.index_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.index_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.index_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        for ci in range(self.index_table.columnCount()):
+            self.index_table.horizontalHeader().setSectionResizeMode(ci, QHeaderView.ResizeToContents)
+        self.index_table.setColumnHidden(idx_total_cols - 1, True)
+        idx_layout.addWidget(self.index_table, 1)
+
+        self.tabs.addTab(self.index_tab, "Zmiany parametrów stołu")
+
 
         self.programs_tab = QWidget()
         pg_layout = QVBoxLayout(self.programs_tab)
@@ -2186,6 +2236,13 @@ class ModernMainWindow(QMainWindow):
         self.analysis_table.setRowCount(0)
         self.analysis_records = []
         try:
+            if hasattr(self, 'index_table') and self.index_table is not None:
+                self.index_table.setRowCount(0)
+        except Exception:
+            pass
+        self.index_events = []
+        self.index_filtered_rows = []
+        try:
             self._update_thread_state('Wątki: analiza')
         except Exception:
             pass
@@ -2243,7 +2300,7 @@ class ModernMainWindow(QMainWindow):
             )
         except Exception:
             pass
-    def _on_analysis_finished(self, records: list):
+    def _on_analysis_finished(self, records):
         if self._is_worker_running('intra_worker'):
             self.status_label.setText("Analiza zakończona (trwa pobieranie Intranetu)")
             try:
@@ -2268,13 +2325,20 @@ class ModernMainWindow(QMainWindow):
             )
         except Exception:
             pass
-        snaps: list[ParamSnapshot] = sorted(records, key=lambda r: r.dt)
+        if isinstance(records, dict):
+            param_records = list(records.get('params') or [])
+            index_records = list(records.get('index') or [])
+        else:
+            param_records = list(records or [])
+            index_records = []
+
+        snaps: list[ParamSnapshot] = sorted(param_records, key=lambda r: r.dt)
         events = []
         prog_events = []
         seen_prog = set()
-        last_state = {}
-        last_prog = {}
-        baseline_done = set()
+        last_state: dict[tuple[str, str, str, int], ParamSnapshot] = {}
+        last_prog: dict[tuple[str, str, str, int], str] = {}
+        baseline_done: set[tuple[str, str, str, int]] = set()
         try:
             threshold_pct = float(self.settings.value("large_change_threshold_pct", 10, type=int))
         except Exception:
@@ -2284,7 +2348,13 @@ class ModernMainWindow(QMainWindow):
             if key not in baseline_done:
 
                 baseline_done.add(key)
-                last_state[key] = dict(s.values)
+                last_state[key] = s
+                last_prog[key] = s.program
+                continue
+
+            prev = last_state.get(key)
+            if prev is None:
+                last_state[key] = s
                 last_prog[key] = s.program
                 continue
 
@@ -2298,23 +2368,73 @@ class ModernMainWindow(QMainWindow):
                         'old_program': last_prog.get(key, ''),
                         'new_program': s.program,
                     })
-                last_state[key] = dict(s.values)
+                last_state[key] = s
                 last_prog[key] = s.program
                 continue
 
-            prev = last_state.get(key, {})
             changed_cols = {}
             large_cols = {}
             for name in PARAM_DISPLAY_ORDER:
-                nv = s.values.get(name, 0)
-                pv = prev.get(name, 0)
-                if abs((nv or 0) - (pv or 0)) > 1e-12:
-                    changed_cols[name] = f"{pv:g} -> {nv:g}"
-                    if abs(pv) > 1e-12:
-                        pct = abs((nv - pv) / pv) * 100.0
+                if name == 'Step Speed':
+                    prev_speed = prev.values.get('Step Speed')
+                    curr_speed = s.values.get('Step Speed')
+                    if prev_speed is None and curr_speed is None:
+                        changed = False
+                    elif prev_speed is None or curr_speed is None:
+                        changed = True
                     else:
-                        pct = 100.0 if abs(nv) > 1e-12 else 0.0
-                    large_cols[name] = (pct >= threshold_pct)
+                        try:
+                            changed = abs(curr_speed - prev_speed) > 1e-12
+                        except Exception:
+                            changed = curr_speed != prev_speed
+                    if changed:
+                        prev_txt = self._format_override_value(prev_speed)
+                        curr_txt = self._format_override_value(curr_speed)
+                        changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                        if (
+                            prev_speed is not None
+                            and curr_speed is not None
+                            and abs(prev_speed) > 1e-12
+                        ):
+                            pct = abs((curr_speed - prev_speed) / prev_speed) * 100.0
+                            large_cols[name] = (pct >= threshold_pct)
+                        else:
+                            large_cols[name] = False
+                    else:
+                        changed_cols[name] = ""
+                        large_cols[name] = False
+                    continue
+
+                if name not in PARAM_NAMES:
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+                    continue
+
+                prev_include = bool(prev.included.get(name, False))
+                curr_include = bool(s.included.get(name, False))
+                if not prev_include and not curr_include:
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+                    continue
+
+                prev_mode = prev.modes.get(name, 'ABS')
+                curr_mode = s.modes.get(name, 'ABS')
+                prev_value = float(prev.values.get(name, 0.0) or 0.0)
+                curr_value = float(s.values.get(name, 0.0) or 0.0)
+
+                value_changed = abs(curr_value - prev_value) > 1e-12
+                mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
+                include_changed = curr_include != prev_include
+
+                if value_changed or mode_changed or include_changed:
+                    prev_txt = self._format_index_value(prev_include, prev_value, prev_mode)
+                    curr_txt = self._format_index_value(curr_include, curr_value, curr_mode)
+                    changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                    if prev_include and curr_include and abs(prev_value) > 1e-12:
+                        pct = abs((curr_value - prev_value) / prev_value) * 100.0
+                        large_cols[name] = (pct >= threshold_pct)
+                    else:
+                        large_cols[name] = False
                 else:
                     changed_cols[name] = ""
                     large_cols[name] = False
@@ -2332,8 +2452,9 @@ class ModernMainWindow(QMainWindow):
                     'type': 'change',
                 }
                 events.append(row)
-                last_state[key] = dict(s.values)
-                last_prog[key] = s.program
+
+            last_state[key] = s
+            last_prog[key] = s.program
 
         events.sort(key=lambda x: (x['dt'], x['machine'], x.get('pin', ''), x['step']))
         prog_events.sort(key=lambda x: (x['dt'], x['machine']))
@@ -2343,6 +2464,12 @@ class ModernMainWindow(QMainWindow):
         self._apply_analysis_filters()
         self._populate_program_filters()
         self._apply_program_filters()
+
+        index_snaps: list[IndexSnapshot] = sorted(index_records, key=lambda r: r.dt)
+        index_events = self._build_index_events(index_snaps, threshold_pct)
+        self.index_events = index_events
+        self._populate_index_filters()
+        self._apply_index_filters()
         try:
             self._fill_change_trees()
         except Exception:
@@ -2438,6 +2565,190 @@ class ModernMainWindow(QMainWindow):
             self.analysis_table.setItem(i, path_col_idx, QTableWidgetItem(e.get('path','')))
         self.analysis_table.resizeColumnsToContents()
         self.analysis_filtered_rows = rows
+
+    def _populate_index_filters(self):
+        events = getattr(self, 'index_events', [])
+        machines = sorted({e['machine'] for e in events})
+        tables = sorted({e['table'] for e in events})
+        steps = sorted({e['step'] for e in events})
+        params = INDEX_PARAM_DISPLAY_ORDER
+
+        def fill(cb, items):
+            prev = cb.currentText() if cb.count() else ""
+            cb.blockSignals(True)
+            cb.clear()
+            cb.addItem("(Wszystkie)")
+            for it in items:
+                cb.addItem(str(it))
+            ix = cb.findText(prev)
+            if ix >= 0:
+                cb.setCurrentIndex(ix)
+            cb.blockSignals(False)
+
+        fill(self.idx_f_machine, machines)
+        fill(self.idx_f_table, tables)
+        fill(self.idx_f_step, steps)
+        fill(self.idx_f_param, params)
+
+    def _apply_index_filters(self):
+        if not hasattr(self, 'index_events'):
+            return
+        m = self.idx_f_machine.currentText() if self.idx_f_machine.count() else "(Wszystkie)"
+        table = self.idx_f_table.currentText() if self.idx_f_table.count() else "(Wszystkie)"
+        st = self.idx_f_step.currentText() if self.idx_f_step.count() else "(Wszystkie)"
+        par = self.idx_f_param.currentText() if self.idx_f_param.count() else "(Wszystkie)"
+
+        rows = []
+        for e in getattr(self, 'index_events', []):
+            if e.get('type') != 'index_change':
+                continue
+            if m and m != "(Wszystkie)" and e['machine'] != m:
+                continue
+            if table and table != "(Wszystkie)" and e['table'] != table:
+                continue
+            if st and st != "(Wszystkie)" and str(e['step']) != st:
+                continue
+            if par and par != "(Wszystkie)":
+                if not e['cols'].get(par):
+                    continue
+            rows.append(e)
+
+        rows.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
+
+        self.index_table.setRowCount(len(rows))
+        highlight = QBrush(QColor('#fff6bf'))
+        big_change = QBrush(QColor('#ffd6d6'))
+        for i, e in enumerate(rows):
+            self.index_table.setItem(i, 0, QTableWidgetItem(e['dt'].strftime('%Y-%m-%d')))
+            self.index_table.setItem(i, 1, QTableWidgetItem(e['dt'].strftime('%H:%M:%S')))
+            self.index_table.setItem(i, 2, QTableWidgetItem(e['machine']))
+            self.index_table.setItem(i, 3, QTableWidgetItem(e['program']))
+            self.index_table.setItem(i, 4, QTableWidgetItem(e['table']))
+            self.index_table.setItem(i, 5, QTableWidgetItem(str(e['step'])))
+
+            base = 6
+            params = INDEX_PARAM_DISPLAY_ORDER
+            for j, name in enumerate(params):
+                val = e['cols'].get(name, "")
+                item = QTableWidgetItem(val)
+                if val:
+                    if e.get('large', {}).get(name):
+                        item.setBackground(big_change)
+                    else:
+                        item.setBackground(highlight)
+                self.index_table.setItem(i, base + j, item)
+
+            path_col_idx = base + len(params)
+            self.index_table.setItem(i, path_col_idx, QTableWidgetItem(e.get('path', '')))
+        self.index_table.resizeColumnsToContents()
+        self.index_filtered_rows = rows
+
+    def _format_index_value(self, include: bool, value: float, mode: str) -> str:
+        if not include:
+            return "wył."
+        try:
+            val_txt = f"{value:g}"
+        except Exception:
+            val_txt = str(value)
+        mode_txt = (mode or '').upper()
+        if mode_txt:
+            if val_txt:
+                return f"{val_txt} ({mode_txt})"
+            return f"({mode_txt})"
+        return val_txt
+
+    def _format_override_value(self, value: float | None) -> str:
+        if value is None:
+            return "(brak)"
+        try:
+            return f"{value:g}"
+        except Exception:
+            return str(value)
+
+    def _build_index_events(self, snaps: list[IndexSnapshot], threshold_pct: float) -> list[dict]:
+        events: list[dict] = []
+        last_state: dict[tuple[str, str, int], IndexSnapshot] = {}
+        baseline_done: set[tuple[str, str, int]] = set()
+        for s in snaps:
+            key = (s.machine, s.table, s.step)
+            if key not in baseline_done:
+                baseline_done.add(key)
+                last_state[key] = s
+                continue
+
+            prev = last_state.get(key)
+            if prev is None:
+                last_state[key] = s
+                continue
+
+            changed_cols: dict[str, str] = {}
+            large_cols: dict[str, bool] = {}
+            for name in INDEX_PARAM_DISPLAY_ORDER:
+                if name == INDEX_OVERRIDE_LABEL:
+                    prev_val = prev.override
+                    curr_val = s.override
+                    changed = False
+                    if prev_val is None and curr_val is None:
+                        changed = False
+                    elif prev_val is None or curr_val is None:
+                        changed = True
+                    else:
+                        changed = abs(curr_val - prev_val) > 1e-12
+                    if changed:
+                        prev_txt = self._format_override_value(prev_val)
+                        curr_txt = self._format_override_value(curr_val)
+                        changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                    else:
+                        changed_cols[name] = ""
+                    large_cols[name] = False
+                    continue
+
+                prev_include = bool(prev.included.get(name, False))
+                curr_include = bool(s.included.get(name, False))
+                if not prev_include and not curr_include:
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+                    continue
+
+                prev_mode = prev.modes.get(name, 'ABS')
+                curr_mode = s.modes.get(name, 'ABS')
+                prev_value = float(prev.values.get(name, 0.0) or 0.0)
+                curr_value = float(s.values.get(name, 0.0) or 0.0)
+
+                value_changed = abs(curr_value - prev_value) > 1e-12
+                mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
+                include_changed = curr_include != prev_include
+
+                if value_changed or mode_changed or include_changed:
+                    prev_txt = self._format_index_value(prev_include, prev_value, prev_mode)
+                    curr_txt = self._format_index_value(curr_include, curr_value, curr_mode)
+                    changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                    if prev_include and curr_include and abs(prev_value) > 1e-12:
+                        pct = abs((curr_value - prev_value) / prev_value) * 100.0
+                        large_cols[name] = (pct >= threshold_pct)
+                    else:
+                        large_cols[name] = False
+                else:
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+
+            if any(changed_cols.values()):
+                events.append({
+                    'dt': s.dt,
+                    'machine': s.machine,
+                    'program': s.program,
+                    'table': s.table,
+                    'step': s.step,
+                    'pin': '',
+                    'cols': changed_cols,
+                    'large': large_cols,
+                    'path': s.path,
+                    'type': 'index_change',
+                })
+            last_state[key] = s
+
+        events.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
+        return events
 
     def _fill_change_trees(self):
         try:
@@ -2986,6 +3297,36 @@ class ModernMainWindow(QMainWindow):
             self._log(f"[Export] Zapisano CSV: {path}")
         except Exception as ex:
             QMessageBox.critical(self, "BĂ„Ä…Ă˘â‚¬ĹˇÄ‚â€žĂ˘â‚¬Â¦d eksportu", str(ex))
+
+    def _export_index_csv(self):
+        rows = getattr(self, 'index_filtered_rows', getattr(self, 'index_events', []))
+        if not rows:
+            QMessageBox.information(self, "Brak danych", "Brak wierszy do eksportu.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Zapisz CSV", "zmiany_parametrow_stolu.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        headers = ["Data", "Czas", "Maszyna", "Program", "Tabela", "Step"] + INDEX_PARAM_DISPLAY_ORDER
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f, delimiter=';')
+                w.writerow(headers)
+                for e in rows:
+                    if e.get('type') != 'index_change':
+                        continue
+                    row = [
+                        e['dt'].strftime('%Y-%m-%d'),
+                        e['dt'].strftime('%H:%M:%S'),
+                        e['machine'],
+                        e['program'],
+                        e['table'],
+                        e['step'],
+                    ]
+                    row += [e['cols'].get(name, "") for name in INDEX_PARAM_DISPLAY_ORDER]
+                    w.writerow(row)
+            self._log(f"[Export] Zapisano CSV: {path}")
+        except Exception as ex:
+            QMessageBox.critical(self, "Błąd eksportu", str(ex))
 
     def _export_programs_csv(self):
         rows = getattr(self, 'program_filtered_rows', getattr(self, 'program_events', []))
