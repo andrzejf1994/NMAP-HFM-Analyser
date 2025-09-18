@@ -30,4 +30,20 @@ class ParamSnapshot:
     path: str
 
 
-__all__ = ["FoundFile", "ParamSnapshot"]
+@dataclass(slots=True)
+class IndexSnapshot:
+    """Snapshot of table index parameters extracted from a backup file."""
+
+    dt: datetime
+    machine: str
+    program: str
+    table: str
+    step: int
+    values: Dict[str, float]
+    included: Dict[str, bool]
+    modes: Dict[str, str]
+    override: float | None
+    path: str
+
+
+__all__ = ["FoundFile", "ParamSnapshot", "IndexSnapshot"]
