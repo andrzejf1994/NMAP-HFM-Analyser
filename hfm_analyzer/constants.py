@@ -27,6 +27,22 @@ PARAM_DISPLAY_ORDER = [
     "Y",
 ]
 
+INDEX_PARAM_NAMES = [
+    "Index",
+    "Pionowe kompaktora",
+    "Pionowe rozszerzania",
+    "Poprzeczny wprowadzania",
+    "Poziomy wprowadzania",
+    "Poprzeczny leja",
+    "Poziomy leja",
+    "Zabezpieczenie wewnętrzne",
+    "Zabezpieczenie zewnętrzne",
+]
+
+INDEX_OVERRIDE_LABEL = "Nadpisanie"
+
+INDEX_PARAM_DISPLAY_ORDER = INDEX_PARAM_NAMES + [INDEX_OVERRIDE_LABEL]
+
 SUMMARY_PALETTE = [
     "#3498db",
     "#2ecc71",
@@ -148,5 +164,8 @@ __all__ = [
     "DEFAULT_INTRANET_EXCLUDES_LIST",
     "PARAM_NAMES",
     "PARAM_DISPLAY_ORDER",
+    "INDEX_PARAM_NAMES",
+    "INDEX_OVERRIDE_LABEL",
+    "INDEX_PARAM_DISPLAY_ORDER",
     "SUMMARY_PALETTE",
 ]
