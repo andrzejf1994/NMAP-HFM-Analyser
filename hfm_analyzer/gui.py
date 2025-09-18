@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import glob
 import logging
 import math
 import os
@@ -1636,6 +1637,143 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _prepare_analysis_files(self) -> list[FoundFile]:
+        files = list(getattr(self, 'found_files', []))
+        if not files:
+            return files
+
+        base_path = self._get_base_path()
+        if not base_path or not network_path_available(base_path):
+            return files
+
+        try:
+            earliest: dict[str, FoundFile] = {}
+            for entry in files:
+                current = earliest.get(entry.machine)
+                if current is None or entry.dt < current.dt:
+                    earliest[entry.machine] = entry
+
+            extras: list[FoundFile] = []
+            baseline_details: list[tuple[str, str]] = []
+            seen_paths = {entry.path for entry in files}
+            for machine, ref in earliest.items():
+                prev = self._find_previous_backup_file(base_path, machine, ref.dt)
+                if prev is not None and prev.path not in seen_paths:
+                    extras.append(prev)
+                    seen_paths.add(prev.path)
+                    try:
+                        filename = os.path.basename(prev.path) if prev.path else "(brak)"
+                    except Exception:
+                        filename = prev.path or "(brak)"
+                    baseline_details.append((machine, filename))
+
+            if not extras:
+                return files
+
+            combined = files + extras
+            combined.sort(key=lambda item: (item.dt, item.machine, item.path))
+            try:
+                details_txt = "; ".join(
+                    f"{machine}: {name}" for machine, name in baseline_details
+                )
+                msg = (
+                    f"[Analysis] Dodano {len(extras)} plik(ów) migawki spoza wybranego zakresu"
+                )
+                if details_txt:
+                    msg += f": {details_txt}"
+                self._log(msg)
+            except Exception:
+                pass
+            return combined
+        except Exception:
+            return files
+
+    def _find_previous_backup_file(
+        self, base_path: str, machine: str, reference_dt: datetime
+    ) -> FoundFile | None:
+        try:
+            machine_dir = os.path.join(base_path, machine)
+            if not os.path.isdir(machine_dir):
+                return None
+
+            try:
+                years = sorted(
+                    (entry for entry in os.listdir(machine_dir) if entry.isdigit()),
+                    reverse=True,
+                )
+            except Exception:
+                years = []
+
+            for year in years:
+                year_path = os.path.join(machine_dir, year)
+                if not os.path.isdir(year_path):
+                    continue
+                try:
+                    year_val = int(year)
+                except Exception:
+                    continue
+                if year_val > reference_dt.year:
+                    continue
+
+                try:
+                    months = sorted(
+                        (entry for entry in os.listdir(year_path) if entry.isdigit()),
+                        reverse=True,
+                    )
+                except Exception:
+                    months = []
+
+                for month in months:
+                    month_path = os.path.join(year_path, month)
+                    if not os.path.isdir(month_path):
+                        continue
+                    try:
+                        month_val = int(month)
+                    except Exception:
+                        continue
+                    if year_val == reference_dt.year and month_val > reference_dt.month:
+                        continue
+
+                    try:
+                        days = sorted(os.listdir(month_path), reverse=True)
+                    except Exception:
+                        days = []
+
+                    for day_name in days:
+                        day_path = os.path.join(month_path, day_name)
+                        if not os.path.isdir(day_path):
+                            continue
+                        try:
+                            day_date = datetime.strptime(day_name, "%Y-%m-%d").date()
+                        except Exception:
+                            continue
+                        if day_date > reference_dt.date():
+                            continue
+
+                        pattern = os.path.join(day_path, f"{machine}_{day_name}_*.xml")
+                        try:
+                            candidates = sorted(glob.glob(pattern), reverse=True)
+                        except Exception:
+                            candidates = []
+
+                        for path in candidates:
+                            parts = os.path.basename(path).split("_")
+                            if len(parts) < 3:
+                                continue
+                            dt_str = parts[1] + "_" + parts[2].replace(".xml", "")
+                            try:
+                                file_dt = datetime.strptime(
+                                    dt_str, "%Y-%m-%d_%H-%M-%S"
+                                ).replace(second=0)
+                            except Exception:
+                                continue
+                            if file_dt >= reference_dt:
+                                continue
+                            return FoundFile(machine=machine, dt=file_dt, path=path)
+            return None
+        except Exception:
+            return None
+
     def _render_summary(self):
 
         total_changes = len(self.found_files)
@@ -2232,6 +2370,10 @@ class ModernMainWindow(QMainWindow):
                 return
         except Exception:
             pass
+        analysis_files = self._prepare_analysis_files()
+        if not analysis_files:
+            QMessageBox.information(self, "Brak danych", "Brak plików do analizy.")
+            return
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
         self.status_label.setText("Analiza zmian...")
@@ -2253,7 +2395,7 @@ class ModernMainWindow(QMainWindow):
 
         try:
             self.analysis_started_at = datetime.now()
-            total_files = len(self.found_files)
+            total_files = len(analysis_files)
             self._log(
                 f"[Analysis] START {self.analysis_started_at.strftime('%Y-%m-%d %H:%M:%S')} | files={total_files}"
             )
@@ -2263,7 +2405,10 @@ class ModernMainWindow(QMainWindow):
             pref_workers = self.settings.value("analysis_workers", 0, type=int)
         except Exception:
             pref_workers = 0
-        self.a_worker = AnalyzeWorker(self.found_files, max_workers=(pref_workers if pref_workers and pref_workers > 0 else None))
+        self.a_worker = AnalyzeWorker(
+            analysis_files,
+            max_workers=(pref_workers if pref_workers and pref_workers > 0 else None),
+        )
         self.a_worker.progress.connect(self._on_progress)
         self.a_worker.finished.connect(self._on_analysis_finished)
         self.a_worker.error.connect(self._on_analysis_error)
