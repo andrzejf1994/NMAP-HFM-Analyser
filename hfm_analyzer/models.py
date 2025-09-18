@@ -26,7 +26,9 @@ class ParamSnapshot:
     table: str
     pin: str
     step: int
-    values: Dict[str, float]
+    values: Dict[str, float | None]
+    included: Dict[str, bool]
+    modes: Dict[str, str]
     path: str
 
 

@@ -14,7 +14,6 @@ import xml.etree.ElementTree as ET
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from .constants import INDEX_PARAM_NAMES
 from .models import FoundFile, IndexSnapshot, ParamSnapshot
 
 try:  # Optional acceleration when lxml is available.
@@ -187,57 +186,26 @@ class AnalyzeWorker(QThread):
                 for step_index, step_el in enumerate(steps, start=1):
                     r_pos = None
                     bo_ax = None
+
                     for array in step_el.iter("Array"):
                         name = array.get("name")
                         if name == "rPos":
                             r_pos = array
                         elif name == "boAxIncluded":
                             bo_ax = array
-                        if r_pos is not None and bo_ax is not None:
                             break
                     if r_pos is None or bo_ax is None:
                         continue
                     pos_items = list(r_pos.iter("Item"))
                     inc_items = list(bo_ax.iter("Item"))
-                    values = [0.0] * 7
-                    any_non_zero = False
-                    for idx in range(7):
-                        include = 0
-                        if idx < len(inc_items):
-                            try:
-                                include = int((inc_items[idx].get("value") or "0"))
-                            except Exception:
-                                include = 0
-                        if include == 1 and idx < len(pos_items):
                             try:
                                 value = float(pos_items[idx].get("value") or "0")
                             except Exception:
                                 value = 0.0
-                            values[idx] = value
-                            if abs(value) > 1e-12:
-                                any_non_zero = True
-                    if not any_non_zero:
-                        continue
-
-                    step_speed = None
-                    try:
-                        for item in step_el.iter("Item"):
-                            if item.get("name") == "iOverride":
-                                step_speed = float((item.get("value") or "0").strip())
                                 break
                     except Exception:
                         step_speed = None
 
-                    record_values = {
-                        "X": values[0],
-                        "Y": values[1],
-                        "Angle": values[2],
-                        "Rotation": values[3],
-                        "Nose Translation": values[4],
-                        "Nose Locking": values[5],
-                        "Step Speed": step_speed if step_speed is not None else 0.0,
-                        "Wire Feeding": values[6],
-                    }
                     param_records.append(
                         ParamSnapshot(
                             dt=found_file.dt,
@@ -246,7 +214,6 @@ class AnalyzeWorker(QThread):
                             table=struct_idx,
                             pin=pin_name,
                             step=step_index,
-                            values=record_values,
                             path=found_file.path,
                         )
                     )

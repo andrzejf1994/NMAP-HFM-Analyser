@@ -2335,9 +2335,9 @@ class ModernMainWindow(QMainWindow):
         events = []
         prog_events = []
         seen_prog = set()
-        last_state = {}
-        last_prog = {}
-        baseline_done = set()
+        last_state: dict[tuple[str, str, str, int], ParamSnapshot] = {}
+        last_prog: dict[tuple[str, str, str, int], str] = {}
+        baseline_done: set[tuple[str, str, str, int]] = set()
         try:
             threshold_pct = float(self.settings.value("large_change_threshold_pct", 10, type=int))
         except Exception:
@@ -2347,7 +2347,13 @@ class ModernMainWindow(QMainWindow):
             if key not in baseline_done:
 
                 baseline_done.add(key)
-                last_state[key] = dict(s.values)
+                last_state[key] = s
+                last_prog[key] = s.program
+                continue
+
+            prev = last_state.get(key)
+            if prev is None:
+                last_state[key] = s
                 last_prog[key] = s.program
                 continue
 
@@ -2361,23 +2367,73 @@ class ModernMainWindow(QMainWindow):
                         'old_program': last_prog.get(key, ''),
                         'new_program': s.program,
                     })
-                last_state[key] = dict(s.values)
+                last_state[key] = s
                 last_prog[key] = s.program
                 continue
 
-            prev = last_state.get(key, {})
             changed_cols = {}
             large_cols = {}
             for name in PARAM_DISPLAY_ORDER:
-                nv = s.values.get(name, 0)
-                pv = prev.get(name, 0)
-                if abs((nv or 0) - (pv or 0)) > 1e-12:
-                    changed_cols[name] = f"{pv:g} -> {nv:g}"
-                    if abs(pv) > 1e-12:
-                        pct = abs((nv - pv) / pv) * 100.0
+                if name == 'Step Speed':
+                    prev_speed = prev.values.get('Step Speed')
+                    curr_speed = s.values.get('Step Speed')
+                    if prev_speed is None and curr_speed is None:
+                        changed = False
+                    elif prev_speed is None or curr_speed is None:
+                        changed = True
                     else:
-                        pct = 100.0 if abs(nv) > 1e-12 else 0.0
-                    large_cols[name] = (pct >= threshold_pct)
+                        try:
+                            changed = abs(curr_speed - prev_speed) > 1e-12
+                        except Exception:
+                            changed = curr_speed != prev_speed
+                    if changed:
+                        prev_txt = self._format_override_value(prev_speed)
+                        curr_txt = self._format_override_value(curr_speed)
+                        changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                        if (
+                            prev_speed is not None
+                            and curr_speed is not None
+                            and abs(prev_speed) > 1e-12
+                        ):
+                            pct = abs((curr_speed - prev_speed) / prev_speed) * 100.0
+                            large_cols[name] = (pct >= threshold_pct)
+                        else:
+                            large_cols[name] = False
+                    else:
+                        changed_cols[name] = ""
+                        large_cols[name] = False
+                    continue
+
+                if name not in PARAM_NAMES:
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+                    continue
+
+                prev_include = bool(prev.included.get(name, False))
+                curr_include = bool(s.included.get(name, False))
+                if not prev_include and not curr_include:
+                    changed_cols[name] = ""
+                    large_cols[name] = False
+                    continue
+
+                prev_mode = prev.modes.get(name, 'ABS')
+                curr_mode = s.modes.get(name, 'ABS')
+                prev_value = float(prev.values.get(name, 0.0) or 0.0)
+                curr_value = float(s.values.get(name, 0.0) or 0.0)
+
+                value_changed = abs(curr_value - prev_value) > 1e-12
+                mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
+                include_changed = curr_include != prev_include
+
+                if value_changed or mode_changed or include_changed:
+                    prev_txt = self._format_index_value(prev_include, prev_value, prev_mode)
+                    curr_txt = self._format_index_value(curr_include, curr_value, curr_mode)
+                    changed_cols[name] = f"{prev_txt} -> {curr_txt}"
+                    if prev_include and curr_include and abs(prev_value) > 1e-12:
+                        pct = abs((curr_value - prev_value) / prev_value) * 100.0
+                        large_cols[name] = (pct >= threshold_pct)
+                    else:
+                        large_cols[name] = False
                 else:
                     changed_cols[name] = ""
                     large_cols[name] = False
@@ -2395,8 +2451,9 @@ class ModernMainWindow(QMainWindow):
                     'type': 'change',
                 }
                 events.append(row)
-                last_state[key] = dict(s.values)
-                last_prog[key] = s.program
+
+            last_state[key] = s
+            last_prog[key] = s.program
 
         events.sort(key=lambda x: (x['dt'], x['machine'], x.get('pin', ''), x['step']))
         prog_events.sort(key=lambda x: (x['dt'], x['machine']))
@@ -2645,14 +2702,6 @@ class ModernMainWindow(QMainWindow):
                     large_cols[name] = False
                     continue
 
-                prev_include = prev.included.get(name, False)
-                curr_include = s.included.get(name, False)
-                prev_mode = prev.modes.get(name, 'ABS')
-                curr_mode = s.modes.get(name, 'ABS')
-                prev_value = prev.values.get(name, 0.0)
-                curr_value = s.values.get(name, 0.0)
-
-                value_changed = abs((curr_value or 0.0) - (prev_value or 0.0)) > 1e-12
                 mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                 include_changed = curr_include != prev_include
 
@@ -2682,7 +2731,6 @@ class ModernMainWindow(QMainWindow):
                     'path': s.path,
                     'type': 'index_change',
                 })
-                last_state[key] = s
 
         events.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
         return events
