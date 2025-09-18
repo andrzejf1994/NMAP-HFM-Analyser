@@ -14,7 +14,6 @@ import xml.etree.ElementTree as ET
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from .constants import INDEX_PARAM_NAMES, PARAM_NAMES
 from .models import FoundFile, IndexSnapshot, ParamSnapshot
 
 try:  # Optional acceleration when lxml is available.
@@ -187,69 +186,25 @@ class AnalyzeWorker(QThread):
                 for step_index, step_el in enumerate(steps, start=1):
                     r_pos = None
                     bo_ax = None
-                    bo_mode = None
+
                     for array in step_el.iter("Array"):
                         name = array.get("name")
                         if name == "rPos":
                             r_pos = array
                         elif name == "boAxIncluded":
                             bo_ax = array
-                        elif name == "boModeRel":
-                            bo_mode = array
-                        if r_pos is not None and bo_ax is not None and bo_mode is not None:
                             break
                     if r_pos is None or bo_ax is None:
                         continue
                     pos_items = list(r_pos.iter("Item"))
                     inc_items = list(bo_ax.iter("Item"))
-                    mode_items = list(bo_mode.iter("Item")) if bo_mode is not None else []
-
-                    values: dict[str, float | None] = {}
-                    included: dict[str, bool] = {}
-                    modes: dict[str, str] = {}
-                    for idx, param_name in enumerate(PARAM_NAMES):
-                        include_flag = False
-                        if idx < len(inc_items):
-                            try:
-                                include_flag = bool(int((inc_items[idx].get("value") or "0")))
-                            except Exception:
-                                include_flag = False
-                        included[param_name] = include_flag
-
-                        value = 0.0
-                        if idx < len(pos_items):
                             try:
                                 value = float(pos_items[idx].get("value") or "0")
                             except Exception:
                                 value = 0.0
-                        values[param_name] = value
-
-                        mode_val = 0
-                        if idx < len(mode_items):
-                            try:
-                                mode_val = int(mode_items[idx].get("value") or "0")
-                            except Exception:
-                                mode_val = 0
-                        modes[param_name] = "REL" if mode_val == 1 else "ABS"
-
-                    step_speed: float | None = None
-                    try:
-                        for item in step_el.iter("Item"):
-                            if item.get("name") == "iOverride":
-                                try:
-                                    step_speed = float((item.get("value") or "0").strip())
-                                except Exception:
-                                    step_speed = None
                                 break
                     except Exception:
                         step_speed = None
-
-                    if step_speed is not None:
-                        values["Step Speed"] = step_speed
-                    else:
-                        values["Step Speed"] = None
-                    included["Step Speed"] = step_speed is not None
-                    modes["Step Speed"] = "ABS"
 
                     param_records.append(
                         ParamSnapshot(
@@ -259,9 +214,6 @@ class AnalyzeWorker(QThread):
                             table=struct_idx,
                             pin=pin_name,
                             step=step_index,
-                            values=values,
-                            included=included,
-                            modes=modes,
                             path=found_file.path,
                         )
                     )
