@@ -68,6 +68,7 @@ from PyQt5.QtWidgets import (
     QTreeWidgetItem,
     QStyledItemDelegate,
     QSizePolicy,
+    QScrollArea,
 )
 
 try:  # Web view is optional, fallback to native widgets otherwise.
@@ -96,7 +97,10 @@ from .utils import (
     map_unc_to_drive_if_possible,
     network_path_available,
 )
-from .workers import AnalyzeWorker, IntranetWorker, ScanWorker
+from .workers import AnalyzeWorker, IntranetWorker, ScanWorker, STEP_SPEED_LABEL
+
+
+TRACKED_MACHINE_CODES: set[str] = {f"M{i}" for i in range(1, 7)} | {f"S{i}" for i in range(1, 7)}
 
 
 def _available_drive_letters() -> list[str]:
@@ -195,6 +199,26 @@ def _maybe_offer_drive_mapping(parent: QWidget, path: str) -> str:
         "Nie udało się zmapować dysku. Sprawdź uprawnienia lub spróbuj ponownie.",
     )
     return mapped
+
+
+def _natural_sort_key(value: str) -> tuple:
+    """Return a key for natural sorting of mixed text/numeric strings."""
+
+    if not isinstance(value, str):
+        value = str(value)
+    parts = re.split(r"(\d+)", value)
+    key: list[tuple[int, object]] = []
+    for part in parts:
+        if part == "":
+            continue
+        if part.isdigit():
+            try:
+                key.append((0, int(part)))
+            except Exception:
+                key.append((0, part))
+        else:
+            key.append((1, part.lower()))
+    return tuple(key)
 
 
 class PieChartWidget(QWidget):
@@ -436,6 +460,158 @@ class BarChartWidget(QWidget):
                 painter.drawText(int(legend_x + 20), int(legend_y + 5 + len(names) * 16), "NOK")
             except Exception:
                 pass
+
+
+class LineChartWidget(QWidget):
+    """Simple line chart widget used for parameter trends when WebEngine is unavailable."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._points: list[tuple[datetime, float]] = []
+        self._title: str = ""
+        self._color = QColor("#3498db")
+        self.setMinimumHeight(220)
+
+    def set_series(
+        self,
+        title: str,
+        points: Iterable[tuple[datetime, float]],
+        color: QColor | None = None,
+    ) -> None:
+        self._title = title
+        cleaned: list[tuple[datetime, float]] = []
+        for dt, value in points or []:
+            if not isinstance(dt, datetime):
+                continue
+            try:
+                val = float(value)
+            except Exception:
+                continue
+            if math.isnan(val) or math.isinf(val):
+                continue
+            cleaned.append((dt, val))
+        cleaned.sort(key=lambda item: item[0])
+        self._points = cleaned
+        if color is not None:
+            self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # pragma: no cover - GUI painting
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        painter.fillRect(self.rect(), QColor("white"))
+        outer = self.rect().adjusted(8, 8, -8, -8)
+        painter.setPen(QPen(QColor("#d0d5db"), 1))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(outer, 8, 8)
+
+        title_font = painter.font()
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.setPen(QColor("#2c3e50"))
+        painter.drawText(
+            QRectF(outer.left() + 16, outer.top() + 8, outer.width() - 32, 24),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            self._title,
+        )
+
+        body_font = painter.font()
+        body_font.setBold(False)
+        painter.setFont(body_font)
+
+        chart_rect = QRectF(
+            outer.left() + 16,
+            outer.top() + 36,
+            max(10.0, outer.width() - 32),
+            max(10.0, outer.height() - 72),
+        )
+
+        if chart_rect.height() <= 0 or chart_rect.width() <= 0:
+            return
+
+        painter.setPen(QPen(QColor("#ecf0f1"), 1))
+        for i in range(1, 5):
+            y = chart_rect.bottom() - i * chart_rect.height() / 5
+            painter.drawLine(QPointF(chart_rect.left(), y), QPointF(chart_rect.right(), y))
+
+        painter.setPen(QPen(QColor("#95a5a6"), 1))
+        painter.drawRect(chart_rect)
+
+        if not self._points:
+            painter.setPen(QColor("#7f8c8d"))
+            painter.drawText(chart_rect, Qt.AlignCenter, "Brak danych")
+            return
+
+        base_dt = min(pt[0] for pt in self._points)
+        x_values = [(pt[0] - base_dt).total_seconds() for pt in self._points]
+        x_span = max(x_values) if x_values else 0.0
+        if x_span <= 0:
+            x_span = 1.0
+
+        y_values = [pt[1] for pt in self._points]
+        y_min = min(y_values)
+        y_max = max(y_values)
+        if math.isclose(y_min, y_max):
+            delta = 1.0 if abs(y_min) < 1.0 else abs(y_min) * 0.1
+            y_min -= delta
+            y_max += delta
+        else:
+            margin = (y_max - y_min) * 0.1
+            y_min -= margin
+            y_max += margin
+        if y_max <= y_min:
+            y_max = y_min + 1.0
+
+        painter.setPen(QColor("#7f8c8d"))
+        for i in range(0, 5):
+            frac = i / 4 if 4 else 0
+            y = chart_rect.bottom() - frac * chart_rect.height()
+            value = y_min + frac * (y_max - y_min)
+            painter.drawText(
+                QRectF(chart_rect.left() - 64, y - 8, 60, 16),
+                Qt.AlignRight | Qt.AlignVCenter,
+                f"{value:.3g}",
+            )
+
+        points = []
+        for offset, value in zip(x_values, y_values):
+            x = chart_rect.left() + (offset / x_span) * chart_rect.width()
+            y = chart_rect.bottom() - ((value - y_min) / (y_max - y_min)) * chart_rect.height()
+            points.append(QPointF(x, y))
+
+        painter.setPen(QPen(self._color, 2))
+        painter.setBrush(Qt.NoBrush)
+        for idx in range(1, len(points)):
+            painter.drawLine(points[idx - 1], points[idx])
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._color)
+        for pt in points:
+            painter.drawEllipse(pt, 3.5, 3.5)
+
+        tick_count = min(5, max(1, len(self._points)))
+        if tick_count == 1:
+            offsets = [x_values[0] if x_values else 0.0]
+        else:
+            offsets = [x_span * i / (tick_count - 1) for i in range(tick_count)]
+
+        painter.setPen(QColor("#2c3e50"))
+        for offset in offsets:
+            x = chart_rect.left() + (offset / x_span) * chart_rect.width()
+            dt = base_dt + timedelta(seconds=offset)
+            date_txt = dt.strftime("%Y-%m-%d")
+            time_txt = dt.strftime("%H:%M")
+            painter.drawText(
+                QRectF(x - 45, chart_rect.bottom() + 4, 90, 16),
+                Qt.AlignHCenter | Qt.AlignVCenter,
+                date_txt,
+            )
+            painter.drawText(
+                QRectF(x - 45, chart_rect.bottom() + 20, 90, 16),
+                Qt.AlignHCenter | Qt.AlignVCenter,
+                time_txt,
+            )
 
 
 class CountBadgeDelegate(QStyledItemDelegate):
@@ -1038,16 +1214,27 @@ class ModernMainWindow(QMainWindow):
         details_layout.addLayout(tree_toolbar)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Maszyna / Data", "Zmian", "Szczegóły"])
+        self.tree.setHeaderLabels(["Maszyna / Data", "Zmian", "OK", "NOK", "Szczegóły"])
         self.tree.setAlternatingRowColors(True)
         self.tree.setColumnWidth(0, 260)
         self.tree.setColumnWidth(1, 90)
+        self.tree.setColumnWidth(2, 75)
+        self.tree.setColumnWidth(3, 75)
         self.tree.setStyleSheet(
             """
             QTreeWidget { border: 1px solid #e0e0e0; border-radius: 8px; }
             QHeaderView::section { background: #f5f6f7; padding:8px; border: none; font-weight: 600; }
             QTreeWidget::item { padding: 6px 8px; }
-            QTreeView::item:selected { background: transparent; outline: 1px solid #3498db; }
+            QTreeView::item:selected {
+                background: rgba(52, 152, 219, 80);
+                color: #2c3e50;
+            }
+            QTreeView::item:selected:active {
+                background: rgba(52, 152, 219, 110);
+            }
+            QTreeView::item:selected:!active {
+                background: rgba(52, 152, 219, 60);
+            }
             """
         )
         details_layout.addWidget(self.tree)
@@ -1226,6 +1413,110 @@ class ModernMainWindow(QMainWindow):
         self.tabs.addTab(self.index_tab, "Zmiany parametrów stołu")
 
 
+        self.param_chart_tab = QWidget()
+        pc_layout = QVBoxLayout(self.param_chart_tab)
+        pc_layout.setContentsMargins(12, 12, 12, 12)
+        pc_layout.setSpacing(8)
+
+        pc_filters = QHBoxLayout()
+        pc_filters.setSpacing(8)
+        self.param_line_machine = QComboBox()
+        self.param_line_pin = QComboBox()
+        self.param_line_step = QComboBox()
+        self.param_line_generate = QPushButton("Generuj wykresy")
+        self.param_line_generate.clicked.connect(self._apply_param_line_filters)
+
+        pc_filters.addWidget(_label("Maszyna:"))
+        pc_filters.addWidget(self.param_line_machine)
+        pc_filters.addWidget(_label("Pin:"))
+        pc_filters.addWidget(self.param_line_pin)
+        pc_filters.addWidget(_label("Step:"))
+        pc_filters.addWidget(self.param_line_step)
+        pc_filters.addWidget(self.param_line_generate)
+        pc_filters.addStretch(1)
+        pc_layout.addLayout(pc_filters)
+
+        self.param_chart_scroll = QScrollArea()
+        self.param_chart_scroll.setWidgetResizable(True)
+        self.param_chart_scroll.setFrameShape(QScrollArea.NoFrame)
+        pc_layout.addWidget(self.param_chart_scroll, 1)
+
+        pc_container = QWidget()
+        pc_container_layout = QVBoxLayout(pc_container)
+        pc_container_layout.setContentsMargins(0, 0, 0, 0)
+        pc_container_layout.setSpacing(12)
+
+        self.param_line_charts: dict[str, LineChartWidget] = {}
+        self._param_line_colors: dict[str, QColor] = {}
+        for idx, name in enumerate(PARAM_DISPLAY_ORDER):
+            group = QGroupBox(name)
+            group_layout = QVBoxLayout(group)
+            chart = LineChartWidget()
+            chart.setMinimumHeight(220)
+            chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            group_layout.addWidget(chart)
+            pc_container_layout.addWidget(group)
+            self.param_line_charts[name] = chart
+            self._param_line_colors[name] = QColor(SUMMARY_PALETTE[idx % len(SUMMARY_PALETTE)])
+
+        pc_container_layout.addStretch(1)
+        self.param_chart_scroll.setWidget(pc_container)
+
+        self.tabs.addTab(self.param_chart_tab, "Wykresy parametrów")
+
+
+        self.index_chart_tab = QWidget()
+        ic_layout = QVBoxLayout(self.index_chart_tab)
+        ic_layout.setContentsMargins(12, 12, 12, 12)
+        ic_layout.setSpacing(8)
+
+        ic_filters = QHBoxLayout()
+        ic_filters.setSpacing(8)
+        self.index_line_machine = QComboBox()
+        self.index_line_pin = QComboBox()
+        self.index_line_step = QComboBox()
+        self.index_line_generate = QPushButton("Generuj wykresy")
+        self.index_line_generate.clicked.connect(self._apply_index_line_filters)
+
+        ic_filters.addWidget(_label("Maszyna:"))
+        ic_filters.addWidget(self.index_line_machine)
+        ic_filters.addWidget(_label("Tablica:"))
+        ic_filters.addWidget(self.index_line_pin)
+        ic_filters.addWidget(_label("Step:"))
+        ic_filters.addWidget(self.index_line_step)
+        ic_filters.addWidget(self.index_line_generate)
+        ic_filters.addStretch(1)
+        ic_layout.addLayout(ic_filters)
+
+        self.index_chart_scroll = QScrollArea()
+        self.index_chart_scroll.setWidgetResizable(True)
+        self.index_chart_scroll.setFrameShape(QScrollArea.NoFrame)
+        ic_layout.addWidget(self.index_chart_scroll, 1)
+
+        ic_container = QWidget()
+        ic_container_layout = QVBoxLayout(ic_container)
+        ic_container_layout.setContentsMargins(0, 0, 0, 0)
+        ic_container_layout.setSpacing(12)
+
+        self.index_line_charts: dict[str, LineChartWidget] = {}
+        self._index_line_colors: dict[str, QColor] = {}
+        for idx, name in enumerate(INDEX_PARAM_DISPLAY_ORDER):
+            group = QGroupBox(name)
+            group_layout = QVBoxLayout(group)
+            chart = LineChartWidget()
+            chart.setMinimumHeight(220)
+            chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            group_layout.addWidget(chart)
+            ic_container_layout.addWidget(group)
+            self.index_line_charts[name] = chart
+            self._index_line_colors[name] = QColor(SUMMARY_PALETTE[idx % len(SUMMARY_PALETTE)])
+
+        ic_container_layout.addStretch(1)
+        self.index_chart_scroll.setWidget(ic_container)
+
+        self.tabs.addTab(self.index_chart_tab, "Wykresy parametrów stołu")
+
+
         self.programs_tab = QWidget()
         pg_layout = QVBoxLayout(self.programs_tab)
         pg_layout.setContentsMargins(12, 12, 12, 12)
@@ -1276,13 +1567,55 @@ class ModernMainWindow(QMainWindow):
         intra_layout.setContentsMargins(12, 12, 12, 12)
         intra_layout.setSpacing(8)
         from PyQt5.QtWidgets import QComboBox as _QComboBox
-        intra_filt = QHBoxLayout()
-        intra_filt.setSpacing(8)
-        self.intra_f_machine = _QComboBox()
-        self.intra_f_machine.currentIndexChanged.connect(self._apply_intranet_filters)
-        intra_filt.addWidget(QLabel("Źródło (mapa):"))
-        intra_filt.addWidget(self.intra_f_machine, 1)
-        intra_layout.addLayout(intra_filt)
+        intra_filt_top = QHBoxLayout()
+        intra_filt_top.setSpacing(8)
+        self.intra_f_machine_code = _QComboBox()
+        self.intra_f_machine_code.currentIndexChanged.connect(self._apply_intranet_filters)
+        self.intra_f_machine_desc = _QComboBox()
+        self.intra_f_machine_desc.currentIndexChanged.connect(self._apply_intranet_filters)
+        self.intra_f_source_desc = _QComboBox()
+        self.intra_f_source_desc.currentIndexChanged.connect(self._apply_intranet_filters)
+        self.intra_f_source_map = _QComboBox()
+        self.intra_f_source_map.currentIndexChanged.connect(self._apply_intranet_filters)
+        intra_filt_top.addWidget(QLabel("Maszyna SAP:"))
+        intra_filt_top.addWidget(self.intra_f_machine_code, 1)
+        intra_filt_top.addWidget(QLabel("Maszyna:"))
+        intra_filt_top.addWidget(self.intra_f_machine_desc, 1)
+        intra_filt_top.addWidget(QLabel("Źródło (opis):"))
+        intra_filt_top.addWidget(self.intra_f_source_desc, 1)
+        intra_filt_top.addWidget(QLabel("Źródło (mapa):"))
+        intra_filt_top.addWidget(self.intra_f_source_map, 1)
+        intra_layout.addLayout(intra_filt_top)
+
+        intra_filt_bottom = QHBoxLayout()
+        intra_filt_bottom.setSpacing(8)
+        self.intra_f_date = QLineEdit()
+        self.intra_f_date.setPlaceholderText("Filtruj datę...")
+        try:
+            self.intra_f_date.setClearButtonEnabled(True)
+        except Exception:
+            pass
+        self.intra_f_date.textChanged.connect(self._apply_intranet_filters)
+        self.intra_f_serial = QLineEdit()
+        self.intra_f_serial.setPlaceholderText("Filtruj serial...")
+        try:
+            self.intra_f_serial.setClearButtonEnabled(True)
+        except Exception:
+            pass
+        self.intra_f_serial.textChanged.connect(self._apply_intranet_filters)
+        self.intra_f_judge = _QComboBox()
+        self.intra_f_judge.currentIndexChanged.connect(self._apply_intranet_filters)
+        intra_filt_bottom.addWidget(QLabel("Data:"))
+        intra_filt_bottom.addWidget(self.intra_f_date, 1)
+        intra_filt_bottom.addWidget(QLabel("Serial No:"))
+        intra_filt_bottom.addWidget(self.intra_f_serial, 1)
+        intra_filt_bottom.addWidget(QLabel("Ocena:"))
+        intra_filt_bottom.addWidget(self.intra_f_judge, 1)
+        intra_layout.addLayout(intra_filt_bottom)
+        try:
+            self._populate_intranet_filters()
+        except Exception:
+            pass
         self.intra_table = QTableWidget(0, 7)
         self.intra_table.setHorizontalHeaderLabels(["Maszyna SAP", "Maszyna", "Źródło (opis)", "Źródło (mapa)", "Data", "Serial No", "Ocena"])
         self.intra_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1300,7 +1633,11 @@ class ModernMainWindow(QMainWindow):
         intra_btns.addWidget(intra_export)
         intra_layout.addLayout(intra_btns)
 
-        self.tabs.addTab(self.intra_tab, "NOK (Intranet)")
+        self.tabs.addTab(self.intra_tab, "Intranet")
+        self.intranet_rows: list[dict] = []
+        self.intranet_filtered_rows: list[dict] = []
+        self.intranet_all_rows: list[dict] = []
+        self.intranet_nok_rows: list[dict] = []
 
 
 
@@ -1308,6 +1645,13 @@ class ModernMainWindow(QMainWindow):
         self.logs_tab = QTextEdit()
         self.logs_tab.setReadOnly(True)
         self.tabs.addTab(self.logs_tab, "Logi")
+
+        self.param_snapshots: list[ParamSnapshot] = []
+        self.index_snapshots: list[IndexSnapshot] = []
+        self._populate_param_line_filters()
+        self._populate_index_line_filters()
+        self._clear_param_line_charts()
+        self._clear_index_line_charts()
 
         root.addWidget(self.tabs)
 
@@ -1554,6 +1898,8 @@ class ModernMainWindow(QMainWindow):
         try:
             self.intranet_rows = []
             self.intranet_filtered_rows = []
+            self.intranet_all_rows = []
+            self.intranet_nok_rows = []
             if hasattr(self, 'intra_table') and self.intra_table is not None:
                 self.intra_table.setRowCount(0)
             if hasattr(self, 'bar_native') and self.bar_native is not None:
@@ -1885,7 +2231,7 @@ class ModernMainWindow(QMainWindow):
             self.bar_native.set_data(x_keys, series)
             # Attempt to overlay NOK aligned to x_keys if intranet_rows present
             try:
-                nok_rows = getattr(self, 'intranet_rows', [])
+                nok_rows = getattr(self, 'intranet_nok_rows', getattr(self, 'intranet_rows', []))
                 if nok_rows:
                     def _norm_label(dt):
                         base = dt.replace(minute=0, second=0, microsecond=0)
@@ -1916,6 +2262,18 @@ class ModernMainWindow(QMainWindow):
             hour = f.dt.replace(minute=0, second=0, microsecond=0)
             grouped[f.machine][f.dt.date()][hour].append(f.dt)
 
+        quality_rollup = self._quality_rollup_by_machine()
+
+        if quality_rollup:
+            for machine, machine_entry in quality_rollup.items():
+                days_map = machine_entry.get('days', {}) if isinstance(machine_entry, dict) else {}
+                machine_days = grouped[machine]
+                for day_key, day_entry in days_map.items():
+                    hours_map = day_entry.get('hours', {}) if isinstance(day_entry, dict) else {}
+                    day_hours = machine_days[day_key]
+                    for hour_key in hours_map.keys():
+                        _ = day_hours[hour_key]
+
         if hasattr(self, 'tree') and self.tree is not None:
 
             def color_for(val, vmin, vmax):
@@ -1933,10 +2291,43 @@ class ModernMainWindow(QMainWindow):
 
             self.tree.clear()
 
-            machine_totals = {
-                m: sum(len(ch) for hours in grouped[m].values() for ch in hours.values())
-                for m in grouped.keys()
-            }
+            def _machine_code(name: object) -> str:
+                text = str(name or '').strip()
+                if not text:
+                    return ''
+                match = re.search(r'([MS])\s*-?\s*(\d{1,2})', text.upper())
+                if not match:
+                    return ''
+                prefix = match.group(1)
+                try:
+                    num = int(match.group(2))
+                except Exception:
+                    return ''
+                code = f"{prefix}{num}"
+                return code if code in TRACKED_MACHINE_CODES else ''
+
+            ordered_codes = [f"M{i}" for i in range(1, 7)] + [f"S{i}" for i in range(1, 7)]
+            code_order = {code: idx for idx, code in enumerate(ordered_codes)}
+
+            machines_available = set(grouped.keys())
+            if quality_rollup:
+                machines_available.update(quality_rollup.keys())
+
+            machines_to_show = [
+                name for name in machines_available if _machine_code(name) in TRACKED_MACHINE_CODES
+            ]
+            machines_to_show.sort(
+                key=lambda nm: (
+                    code_order.get(_machine_code(nm), len(code_order)),
+                    str(nm),
+                )
+            )
+
+            machine_totals = {}
+            for machine in machines_to_show:
+                machine_changes = grouped.get(machine, {})
+                total = sum(len(ch) for hours in machine_changes.values() for ch in hours.values())
+                machine_totals[machine] = total
             if machine_totals:
                 mmin = min(machine_totals.values())
                 mmax = max(machine_totals.values())
@@ -1955,16 +2346,29 @@ class ModernMainWindow(QMainWindow):
                 cc.setAlpha(alpha)
                 return cc
 
-            for machine in sorted(grouped.keys()):
-                total_machine = machine_totals[machine]
-                m_item = QTreeWidgetItem([f"{machine}", str(total_machine), ""])
+            for machine in machines_to_show:
+                total_machine = machine_totals.get(machine, 0)
+                machine_quality = quality_rollup.get(machine, {}) if quality_rollup else {}
+                ok_machine = len(machine_quality.get('ok', ()))
+                nok_machine = len(machine_quality.get('nok', ()))
+                m_item = QTreeWidgetItem([
+                    f"{machine}",
+                    str(total_machine),
+                    str(ok_machine),
+                    str(nok_machine),
+                    "",
+                ])
                 self.tree.addTopLevelItem(m_item)
                 m_item.setExpanded(True)
                 m_item.setTextAlignment(1, Qt.AlignCenter)
+                m_item.setTextAlignment(2, Qt.AlignCenter)
+                m_item.setTextAlignment(3, Qt.AlignCenter)
                 m_col = color_for(total_machine, mmin, mmax)
 
                 m_item.setBackground(0, translucent(m_col, 70))
                 m_item.setBackground(1, m_col)
+                m_item.setBackground(2, translucent(m_col, 50))
+                m_item.setBackground(3, translucent(m_col, 50))
 
                 mc = color_map.get(machine, QColor('#3498db'))
                 ico = self._make_color_icon(mc)
@@ -1978,20 +2382,39 @@ class ModernMainWindow(QMainWindow):
                     pass
 
 
-                day_totals = {day: sum(len(ch) for ch in hours.values()) for day, hours in grouped[machine].items()}
+                machine_changes = grouped.get(machine, {})
+                day_totals = {
+                    day: sum(len(ch) for ch in hours.values())
+                    for day, hours in machine_changes.items()
+                }
                 if day_totals:
                     dmin = min(day_totals.values())
                     dmax = max(day_totals.values())
                 else:
                     dmin = dmax = 0
-                for day, hours_dict in sorted(grouped[machine].items()):
+                for day, hours_dict in sorted(machine_changes.items()):
                     total_day = day_totals[day]
-                    d_item = QTreeWidgetItem([f"{day.strftime('%Y-%m-%d')}", str(total_day), ""])
+                    day_quality = {}
+                    if machine_quality:
+                        day_quality = machine_quality.get('days', {}).get(day, {})
+                    ok_day = len(day_quality.get('ok', ())) if day_quality else 0
+                    nok_day = len(day_quality.get('nok', ())) if day_quality else 0
+                    d_item = QTreeWidgetItem([
+                        f"{day.strftime('%Y-%m-%d')}",
+                        str(total_day),
+                        str(ok_day),
+                        str(nok_day),
+                        "",
+                    ])
                     m_item.addChild(d_item)
                     d_item.setTextAlignment(1, Qt.AlignCenter)
+                    d_item.setTextAlignment(2, Qt.AlignCenter)
+                    d_item.setTextAlignment(3, Qt.AlignCenter)
                     d_col = color_for(total_day, dmin, dmax)
                     d_item.setBackground(0, translucent(d_col, 60))
                     d_item.setBackground(1, d_col)
+                    d_item.setBackground(2, translucent(d_col, 45))
+                    d_item.setBackground(3, translucent(d_col, 45))
 
 
                     hour_totals = {hour: len(changes) for hour, changes in hours_dict.items()}
@@ -2004,17 +2427,218 @@ class ModernMainWindow(QMainWindow):
                         hour_str = hour.strftime('%H:00')
                         minutes = sorted({dt.strftime('%H:%M') for dt in changes})
                         cnt = len(changes)
-                        h_item = QTreeWidgetItem([f"{hour_str}", str(cnt), ", ".join(minutes)])
+                        hour_quality = {}
+                        if day_quality:
+                            hour_quality = day_quality.get('hours', {}).get(hour, {})
+                        ok_hour = len(hour_quality.get('ok', ())) if hour_quality else 0
+                        nok_hour = len(hour_quality.get('nok', ())) if hour_quality else 0
+                        h_item = QTreeWidgetItem([
+                            f"{hour_str}",
+                            str(cnt),
+                            str(ok_hour),
+                            str(nok_hour),
+                            ", ".join(minutes),
+                        ])
                         d_item.addChild(h_item)
                         h_item.setTextAlignment(1, Qt.AlignCenter)
+                        h_item.setTextAlignment(2, Qt.AlignCenter)
+                        h_item.setTextAlignment(3, Qt.AlignCenter)
                         h_col = color_for(cnt, hmin, hmax)
                         h_item.setBackground(0, translucent(h_col, 50))
                         h_item.setBackground(1, h_col)
+                        h_item.setBackground(2, translucent(h_col, 40))
+                        h_item.setBackground(3, translucent(h_col, 40))
 
             try:
                 self.tree.collapseAll()
             except Exception:
                 pass
+
+    def _quality_rollup_by_machine(self) -> dict[str, dict]:
+        rows = getattr(self, 'intranet_all_rows', []) or getattr(self, 'intranet_rows', [])
+        if not rows:
+            return {}
+
+        try:
+            start_dt = self.start_datetime.dateTime().toPyDateTime()
+            end_dt = self.end_datetime.dateTime().toPyDateTime()
+        except Exception:
+            start_dt = None
+            end_dt = None
+        if start_dt and end_dt and end_dt < start_dt:
+            start_dt, end_dt = end_dt, start_dt
+
+        known_machines: set[str] = set()
+        try:
+            known_machines.update(
+                f.machine
+                for f in getattr(self, 'found_files', [])
+                if getattr(f, 'machine', '')
+            )
+        except Exception:
+            pass
+        try:
+            machine_list = getattr(self, 'machine_list', None)
+            if machine_list is not None:
+                known_machines.update(
+                    item.text().strip()
+                    for item in machine_list.selectedItems()
+                    if item
+                    and item.text()
+                    and not item.text().startswith('(')
+                )
+        except Exception:
+            pass
+
+        import re as _re
+
+        def _normalize_code(value: object) -> str:
+            txt = str(value or '').strip()
+            if not txt:
+                return ''
+            match = _re.search(r'([MS])\s*-?\s*(\d{1,2})', txt.upper())
+            if not match:
+                return ''
+            prefix = match.group(1)
+            try:
+                num = int(match.group(2))
+            except Exception:
+                return ''
+            code = f"{prefix}{num}"
+            return code if code in TRACKED_MACHINE_CODES else ''
+
+        display_lookup: dict[str, str] = {code: code for code in TRACKED_MACHINE_CODES}
+        for machine in known_machines:
+            code = _normalize_code(machine)
+            if code:
+                display_lookup.setdefault(code, machine)
+
+        feeder_map: dict[int, str] = {}
+        try:
+            feeder_map.update(getattr(self, '_feeder_map_M', {}))
+        except Exception:
+            pass
+        try:
+            feeder_map.update(getattr(self, '_feeder_map_S', {}))
+        except Exception:
+            pass
+
+        def _display_for_code(code: str) -> str:
+            if not code:
+                return ''
+            return display_lookup.get(code, code)
+
+        def _podajnik_code(desc: object) -> str:
+            text = str(desc or '')
+            match = _re.search(r'podajnik\s*drutu\s*(\d+)', text, _re.I)
+            if not match:
+                return ''
+            try:
+                num = int(match.group(1))
+            except Exception:
+                return ''
+            mapped = feeder_map.get(num, '')
+            return _normalize_code(mapped)
+
+        entries: list[dict] = []
+        for rec in rows:
+            if not isinstance(rec, dict):
+                continue
+            dt = rec.get('data')
+            serial = rec.get('serial_no')
+            judge = str(rec.get('judge', '') or '').strip().upper()
+            if judge not in {'OK', 'NOK'}:
+                continue
+            if not dt or not serial:
+                continue
+            if start_dt and dt < start_dt:
+                continue
+            if end_dt and dt > end_dt:
+                continue
+            entries.append(rec)
+        if not entries:
+            return {}
+        try:
+            entries.sort(key=lambda r: r.get('data'))
+        except Exception:
+            pass
+
+        rollup: dict[str, dict] = {}
+        for rec in entries:
+            dt = rec.get('data')
+            if dt is None:
+                continue
+            judge = str(rec.get('judge', '') or '').strip().upper()
+            serial = str(rec.get('serial_no', '') or '').strip()
+            if not serial:
+                continue
+
+            machine_name = ''
+            if judge == 'OK':
+                opis = str(rec.get('maszyna_opis', '') or '')
+                if not opis.lower().strip().startswith('podajnik drutu'):
+                    continue
+                code = _podajnik_code(opis)
+                if not code:
+                    code = _normalize_code(rec.get('machine_actual'))
+                if not code:
+                    code = _normalize_code(rec.get('sap_mapped'))
+                if not code:
+                    code = _normalize_code(rec.get('maszyna_sap'))
+                if not code:
+                    continue
+                machine_name = _display_for_code(code)
+            else:
+                code = _normalize_code(rec.get('machine_source'))
+                if not code:
+                    code = _normalize_code(rec.get('source_mapped'))
+                if not code:
+                    code = _normalize_code(rec.get('source_opis'))
+                if not code:
+                    code = _normalize_code(rec.get('machine_actual'))
+                if not code:
+                    code = _normalize_code(rec.get('sap_mapped'))
+                if not code:
+                    code = _normalize_code(rec.get('maszyna_sap'))
+                if not code:
+                    continue
+                machine_name = _display_for_code(code)
+
+            if not machine_name:
+                continue
+
+            day_key = dt.date()
+            hour_key = dt.replace(minute=0, second=0, microsecond=0)
+            machine_entry = rollup.setdefault(
+                machine_name,
+                {'ok': set(), 'nok': set(), 'days': {}},
+            )
+            day_entry = machine_entry['days'].setdefault(
+                day_key,
+                {'ok': set(), 'nok': set(), 'hours': {}},
+            )
+            hour_entry = day_entry['hours'].setdefault(
+                hour_key,
+                {'ok': set(), 'nok': set()},
+            )
+
+            if judge == 'NOK':
+                machine_entry['nok'].add(serial)
+                machine_entry['ok'].discard(serial)
+                day_entry['nok'].add(serial)
+                day_entry['ok'].discard(serial)
+                hour_entry['nok'].add(serial)
+                hour_entry['ok'].discard(serial)
+            else:
+                if serial not in machine_entry['nok']:
+                    machine_entry['ok'].add(serial)
+                if serial not in day_entry['nok']:
+                    day_entry['ok'].add(serial)
+                if serial not in hour_entry['nok']:
+                    hour_entry['ok'].add(serial)
+
+        return rollup
+
 
     def _start_intranet_fetch(self, show_progress: bool = True):
 
@@ -2045,6 +2669,8 @@ class ModernMainWindow(QMainWindow):
         try:
             self.intranet_rows = []
             self.intranet_filtered_rows = []
+            self.intranet_all_rows = []
+            self.intranet_nok_rows = []
             if hasattr(self, 'intra_table') and self.intra_table is not None:
                 self.intra_table.setRowCount(0)
             if hasattr(self, 'bar_native') and self.bar_native is not None:
@@ -2103,7 +2729,7 @@ class ModernMainWindow(QMainWindow):
             keys = sorted(series.keys())
             self.bar_native.set_overlay(keys, [int(series[k]) for k in keys])
             # Keep rows for trend overlays per machine
-            self.intranet_rows = rows
+            self.intranet_nok_rows = rows
             self._log(f"[Intranet] Overlay points: {sum(series.values())} events on {len(keys)} buckets")
 
             # Build source machine (feeder) per serial and store rows
@@ -2133,10 +2759,6 @@ class ModernMainWindow(QMainWindow):
                 self._log(f"[Intranet] rows_all={len(all_rows)} NOK={len(rows)}")
             except Exception:
                 pass
-            by_sn = {}
-            for r in all_rows:
-                by_sn.setdefault(r.get('serial_no',''), []).append(r)
-
             def _find_source(sn_rows: list):
                 feed_rows = [rr for rr in sn_rows if 'podajnik drutu' in str(rr.get('maszyna_opis','')).lower()]
                 if feed_rows:
@@ -2151,13 +2773,209 @@ class ModernMainWindow(QMainWindow):
                         return rr.get('maszyna_opis',''), codes[0]
                 return '', ''
 
-            enriched = []
+            by_sn = {}
+            for r in all_rows:
+                by_sn.setdefault(r.get('serial_no',''), []).append(r)
+
+            source_cache: dict[str, tuple[str, str]] = {}
+            for sn, sn_rows in by_sn.items():
+                source_cache[sn] = _find_source(sn_rows)
+
+            known_machines: set[str] = set()
+            try:
+                known_machines.update(
+                    f.machine
+                    for f in getattr(self, 'found_files', [])
+                    if getattr(f, 'machine', '')
+                )
+            except Exception:
+                pass
+            try:
+                machine_list = getattr(self, 'machine_list', None)
+                if machine_list is not None:
+                    known_machines.update(
+                        item.text().strip()
+                        for item in machine_list.selectedItems()
+                        if item
+                        and item.text()
+                        and not item.text().startswith('(')
+                    )
+            except Exception:
+                pass
+
+            def _extract_machine_tokens(text: object) -> list[str]:
+                import re as _re
+
+                tokens: list[str] = []
+                s = str(text or '')
+                if not s:
+                    return tokens
+                for match in _re.finditer(r'([MS]\s*-?\s*\d{1,2})', s, _re.I):
+                    raw = match.group(1).upper()
+                    cleaned = raw.replace(' ', '').replace('-', '')
+                    if len(cleaned) >= 2 and cleaned[0] in ('M', 'S') and cleaned[1:].isdigit():
+                        try:
+                            cleaned = cleaned[0] + str(int(cleaned[1:]))
+                        except Exception:
+                            pass
+                        tokens.append(cleaned)
+                return tokens
+
+            def _normalize_machine_code(value: object) -> str:
+                txt = str(value or '').strip()
+                if not txt:
+                    return ''
+                up = txt.upper().replace(' ', '').replace('-', '').replace('_', '')
+                if len(up) >= 2 and up[0] in ('M', 'S') and up[1:].isdigit():
+                    try:
+                        return up[0] + str(int(up[1:]))
+                    except Exception:
+                        return up
+                tokens = _extract_machine_tokens(txt)
+                return tokens[0] if tokens else ''
+
+            known_lookup: dict[str, str] = {}
+            for name in sorted(known_machines):
+                if not name:
+                    continue
+                norm = _normalize_machine_code(name)
+                if norm and norm not in known_lookup:
+                    known_lookup[norm] = name
+                upper = name.upper()
+                if upper and upper not in known_lookup:
+                    known_lookup[upper] = name
+
+            def _canonical_machine(value: object, allow_unknown: bool = False) -> str:
+                txt = str(value or '').strip()
+                if not txt:
+                    return ''
+                norm = _normalize_machine_code(txt)
+                if norm and norm in known_lookup:
+                    return known_lookup[norm]
+                upper = txt.upper()
+                if upper in known_lookup:
+                    return known_lookup[upper]
+                if allow_unknown or not known_lookup:
+                    return norm or (txt if allow_unknown else '')
+                return ''
+
+            sap_to_machine: dict[str, str] = {}
+            for rec in all_rows:
+                sap = str(rec.get('maszyna_sap', '') or '').strip()
+                if not sap or sap in sap_to_machine:
+                    continue
+                resolved = ''
+                for cand in _extract_machine_tokens(rec.get('maszyna_opis', '')):
+                    resolved = _canonical_machine(cand)
+                    if resolved:
+                        break
+                if not resolved:
+                    src_code = source_cache.get(rec.get('serial_no', ''), ('', ''))[1]
+                    resolved = _canonical_machine(src_code)
+                if resolved:
+                    sap_to_machine[sap] = resolved
+
+            enriched_all: list[dict] = []
+            actual_hits = 0
+            source_hits = 0
+            for r in all_rows:
+                rr = dict(r)
+                src_opis, raw_src_code = source_cache.get(r.get('serial_no', ''), ('', ''))
+                canonical_src = _canonical_machine(raw_src_code)
+                rr['source_opis'] = src_opis
+                rr['source_mapped'] = canonical_src or _canonical_machine(raw_src_code, allow_unknown=True)
+                rr['sap_mapped'] = sap_to_machine.get(str(r.get('maszyna_sap', '') or '').strip(), '')
+
+                actual_candidates = _extract_machine_tokens(rr.get('maszyna_opis', ''))
+                sap = str(rr.get('maszyna_sap', '') or '').strip()
+                mapped_from_sap = sap_to_machine.get(sap, '')
+                if mapped_from_sap:
+                    actual_candidates.append(mapped_from_sap)
+                actual = ''
+                for cand in actual_candidates:
+                    resolved = _canonical_machine(cand)
+                    if resolved:
+                        actual = resolved
+                        break
+                if not actual and mapped_from_sap:
+                    actual = _canonical_machine(mapped_from_sap, allow_unknown=True)
+                if not actual:
+                    desc_upper = str(rr.get('maszyna_opis', '') or '').upper()
+                    for machine in known_machines:
+                        if machine and machine.upper() in desc_upper:
+                            actual = machine
+                            break
+                if actual:
+                    actual_hits += 1
+                rr['machine_actual'] = actual
+
+                source_candidates = []
+                if canonical_src:
+                    source_candidates.append(canonical_src)
+                if raw_src_code:
+                    source_candidates.append(raw_src_code)
+                source_candidates.extend(_extract_machine_tokens(src_opis))
+                if not source_candidates:
+                    source_candidates.extend(_extract_machine_tokens(rr.get('maszyna_opis', '')))
+                source = ''
+                for cand in source_candidates:
+                    resolved = _canonical_machine(cand)
+                    if resolved:
+                        source = resolved
+                        break
+                if not source and canonical_src:
+                    source = _canonical_machine(canonical_src, allow_unknown=True)
+                if not source and raw_src_code:
+                    source = _canonical_machine(raw_src_code, allow_unknown=True)
+                if not source:
+                    desc_upper = str(src_opis or '').upper()
+                    for machine in known_machines:
+                        if machine and machine.upper() in desc_upper:
+                            source = machine
+                            break
+                if source:
+                    source_hits += 1
+                rr['machine_source'] = source
+                enriched_all.append(rr)
+            self.intranet_all_rows = enriched_all
+
+            enriched: list[dict] = []
             for r in rows:
                 rr = dict(r)
-                src_opis, src_code = _find_source(by_sn.get(r.get('serial_no',''), []))
+                src_opis, raw_src_code = source_cache.get(r.get('serial_no', ''), ('', ''))
+                canonical_src = _canonical_machine(raw_src_code)
                 rr['source_opis'] = src_opis
-                rr['source_mapped'] = src_code
+                rr['source_mapped'] = canonical_src or _canonical_machine(raw_src_code, allow_unknown=True)
+                sap = str(rr.get('maszyna_sap', '') or '').strip()
+                rr['sap_mapped'] = sap_to_machine.get(sap, '')
+                rr['machine_actual'] = _canonical_machine(
+                    rr.get('machine_actual') or sap_to_machine.get(sap, ''),
+                    allow_unknown=True,
+                )
+                rr['machine_source'] = _canonical_machine(canonical_src or raw_src_code, allow_unknown=True)
                 enriched.append(rr)
+
+            try:
+                self._log(
+                    f"[Intranet] Known machines for mapping: {sorted(known_machines) or 'brak'}"
+                )
+                self._log(
+                    f"[Intranet] SAP->machine mappings: {len(sap_to_machine)} entries"
+                )
+                self._log(
+                    f"[Intranet] machine_actual mapped {actual_hits}/{len(enriched_all)} | machine_source mapped {source_hits}/{len(enriched_all)}"
+                )
+                unresolved = [
+                    rec.get('maszyna_sap', '')
+                    for rec in enriched_all
+                    if rec.get('maszyna_sap') and not rec.get('machine_actual')
+                ][:5]
+                if unresolved:
+                    self._log(
+                        f"[Intranet] Unresolved machine_actual SAP sample: {unresolved}"
+                    )
+            except Exception:
+                pass
             # Deduplicate by serial_no, keep oldest (by 'data')
             enriched.sort(key=lambda r: r.get('data'))
             seen = set()
@@ -2173,14 +2991,24 @@ class ModernMainWindow(QMainWindow):
                 feeder_cnt = sum(1 for r0 in (all_rows or []) if 'podajnik drutu' in str(r0.get('maszyna_opis','')).lower())
                 missing = [rr.get('serial_no','') for rr in dedup if not rr.get('source_mapped')][:5]
                 self._log(f"[Intranet] Mapped sources: {mapped_cnt}/{len(dedup)} | feeders_in_rows_all={feeder_cnt} | missing_sample={missing}")
+                nok_machine_hits = sum(1 for rr in dedup if rr.get('machine_source'))
+                nok_missing = [rr.get('serial_no','') for rr in dedup if not rr.get('machine_source')][:5]
+                self._log(
+                    f"[Intranet] NOK machine_source mapped {nok_machine_hits}/{len(dedup)} | missing_sample={nok_missing}"
+                )
             except Exception:
                 pass
-            self.intranet_rows = dedup
+            self.intranet_nok_rows = dedup
+            self.intranet_rows = enriched_all
 
             # Populate filters and fill table
             try:
                 self._populate_intranet_filters()
                 self._apply_intranet_filters()
+            except Exception:
+                pass
+            try:
+                self._render_summary()
             except Exception:
                 pass
         except Exception as ex:
@@ -2202,29 +3030,65 @@ class ModernMainWindow(QMainWindow):
             pass
     def _populate_intranet_filters(self):
         rows = getattr(self, 'intranet_rows', [])
-        codes = sorted({r.get('source_mapped','') for r in rows if r.get('source_mapped')})
-        prev = self.intra_f_machine.currentText() if self.intra_f_machine.count() else ""
-        self.intra_f_machine.blockSignals(True)
-        self.intra_f_machine.clear()
-        self.intra_f_machine.addItem("(Wszystkie)")
-        for c in codes:
-            self.intra_f_machine.addItem(c)
-        ix = self.intra_f_machine.findText(prev)
-        if ix >= 0:
-            self.intra_f_machine.setCurrentIndex(ix)
-        self.intra_f_machine.blockSignals(False)
+        if not isinstance(rows, list):
+            rows = []
+        machines_sap = [r.get('maszyna_sap', '') for r in rows if r.get('maszyna_sap')]
+        machines_desc = [r.get('maszyna_opis', '') for r in rows if r.get('maszyna_opis')]
+        sources_desc = [r.get('source_opis', '') for r in rows if r.get('source_opis')]
+        sources_map = [r.get('source_mapped', '') for r in rows if r.get('source_mapped')]
+        judges = [r.get('judge', '') for r in rows if r.get('judge')]
+
+        if hasattr(self, 'intra_f_machine_code'):
+            self._set_combo_items(self.intra_f_machine_code, machines_sap)
+        if hasattr(self, 'intra_f_machine_desc'):
+            self._set_combo_items(self.intra_f_machine_desc, machines_desc)
+        if hasattr(self, 'intra_f_source_desc'):
+            self._set_combo_items(self.intra_f_source_desc, sources_desc)
+        if hasattr(self, 'intra_f_source_map'):
+            self._set_combo_items(self.intra_f_source_map, sources_map)
+        if hasattr(self, 'intra_f_judge'):
+            self._set_combo_items(self.intra_f_judge, judges)
 
     def _apply_intranet_filters(self):
         rows = getattr(self, 'intranet_rows', [])
         if not isinstance(rows, list):
             rows = []
-        sel = self.intra_f_machine.currentText() if self.intra_f_machine.count() else "(Wszystkie)"
+        machine_code = self.intra_f_machine_code.currentText() if self.intra_f_machine_code.count() else "(Wszystkie)"
+        machine_desc = self.intra_f_machine_desc.currentText() if self.intra_f_machine_desc.count() else "(Wszystkie)"
+        source_desc = self.intra_f_source_desc.currentText() if self.intra_f_source_desc.count() else "(Wszystkie)"
+        source_map = self.intra_f_source_map.currentText() if self.intra_f_source_map.count() else "(Wszystkie)"
+        judge_val = self.intra_f_judge.currentText() if self.intra_f_judge.count() else "(Wszystkie)"
+        date_filter = self.intra_f_date.text().strip().lower() if hasattr(self, 'intra_f_date') else ""
+        serial_filter = self.intra_f_serial.text().strip().lower() if hasattr(self, 'intra_f_serial') else ""
         flt = []
         for r in rows:
-            mapped = str(r.get('source_mapped','') or '')
-            if sel and sel != "(Wszystkie)":
-                if not mapped or sel != mapped:
-                    continue
+            mapped = str(r.get('source_mapped', '') or '')
+            machine_val = str(r.get('maszyna_sap', '') or '')
+            machine_desc_val = str(r.get('maszyna_opis', '') or '')
+            source_desc_val = str(r.get('source_opis', '') or '')
+            judge = str(r.get('judge', '') or '')
+            if machine_code and machine_code != "(Wszystkie)" and machine_val != machine_code:
+                continue
+            if machine_desc and machine_desc != "(Wszystkie)" and machine_desc_val != machine_desc:
+                continue
+            if source_desc and source_desc != "(Wszystkie)" and source_desc_val != source_desc:
+                continue
+            if source_map and source_map != "(Wszystkie)" and mapped != source_map:
+                continue
+            if judge_val and judge_val != "(Wszystkie)" and judge != judge_val:
+                continue
+            dt = r.get('data')
+            dt_txt = ''
+            if dt:
+                try:
+                    dt_txt = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    dt_txt = str(dt)
+            if date_filter and date_filter not in dt_txt.lower():
+                continue
+            serial_val = str(r.get('serial_no', '') or '')
+            if serial_filter and serial_filter not in serial_val.lower():
+                continue
             flt.append(r)
         self.intranet_filtered_rows = flt
         # Fill intranet table
@@ -2235,7 +3099,14 @@ class ModernMainWindow(QMainWindow):
             self.intra_table.setItem(i, 2, QTableWidgetItem(r.get('source_opis','')))
             self.intra_table.setItem(i, 3, QTableWidgetItem(r.get('source_mapped','')))
             dt = r.get('data')
-            self.intra_table.setItem(i, 4, QTableWidgetItem(dt.strftime('%Y-%m-%d %H:%M:%S') if dt else ''))
+            if dt:
+                try:
+                    dt_txt = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    dt_txt = str(dt)
+            else:
+                dt_txt = ''
+            self.intra_table.setItem(i, 4, QTableWidgetItem(dt_txt))
             self.intra_table.setItem(i, 5, QTableWidgetItem(r.get('serial_no','')))
             self.intra_table.setItem(i, 6, QTableWidgetItem(r.get('judge','')))
         try:
@@ -2392,6 +3263,16 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             pass
 
+        try:
+            self.param_snapshots = []
+            self.index_snapshots = []
+            self._populate_param_line_filters()
+            self._populate_index_line_filters()
+            self._clear_param_line_charts()
+            self._clear_index_line_charts()
+        except Exception:
+            pass
+
 
         try:
             self.analysis_started_at = datetime.now()
@@ -2481,6 +3362,7 @@ class ModernMainWindow(QMainWindow):
             index_records = []
 
         snaps: list[ParamSnapshot] = sorted(param_records, key=lambda r: r.dt)
+        self.param_snapshots = snaps
         events = []
         prog_events = []
         seen_prog = set()
@@ -2620,10 +3502,21 @@ class ModernMainWindow(QMainWindow):
         self._apply_program_filters()
 
         index_snaps: list[IndexSnapshot] = sorted(index_records, key=lambda r: r.dt)
+        self.index_snapshots = index_snaps
         index_events = self._build_index_events(index_snaps, threshold_pct)
         self.index_events = index_events
         self._populate_index_filters()
         self._apply_index_filters()
+        try:
+            self._populate_param_line_filters()
+            self._clear_param_line_charts()
+        except Exception:
+            pass
+        try:
+            self._populate_index_line_filters()
+            self._clear_index_line_charts()
+        except Exception:
+            pass
         try:
             self._fill_change_trees()
         except Exception:
@@ -2640,28 +3533,16 @@ class ModernMainWindow(QMainWindow):
             pass
     def _populate_analysis_filters(self):
 
-        machines = sorted({e['machine'] for e in getattr(self, 'analysis_events', [])})
-        pins = sorted({e['pin'] for e in getattr(self, 'analysis_events', []) if e['pin']})
-        steps = sorted({e['step'] for e in getattr(self, 'analysis_events', [])})
+        events = getattr(self, 'analysis_events', [])
+        machines = {e.get('machine', '') for e in events if e.get('machine')}
+        pins = {e.get('pin', '') for e in events if e.get('pin')}
+        steps = {e.get('step') for e in events if e.get('step') is not None}
         params = PARAM_DISPLAY_ORDER
 
-        def fill(cb, items):
-            prev = cb.currentText() if cb.count() else ""
-            cb.blockSignals(True)
-            cb.clear()
-            cb.addItem("(Wszystkie)")
-            for it in items:
-                cb.addItem(str(it))
-
-            ix = cb.findText(prev)
-            if ix >= 0:
-                cb.setCurrentIndex(ix)
-            cb.blockSignals(False)
-
-        fill(self.f_machine, machines)
-        fill(self.f_pin, pins)
-        fill(self.f_step, steps)
-        fill(self.f_param, params)
+        self._set_combo_items(self.f_machine, machines)
+        self._set_combo_items(self.f_pin, pins)
+        self._set_combo_items(self.f_step, {str(s) for s in steps})
+        self._set_combo_items(self.f_param, params, sort_items=False)
 
     def _apply_analysis_filters(self):
         if not hasattr(self, 'analysis_events'):
@@ -2720,29 +3601,145 @@ class ModernMainWindow(QMainWindow):
         self.analysis_table.resizeColumnsToContents()
         self.analysis_filtered_rows = rows
 
+    def _set_combo_items(self, combo: QComboBox, items: Iterable[str], *, sort_items: bool = True) -> None:
+        texts: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            text = str(item)
+            if not text:
+                continue
+            if text in seen:
+                continue
+            texts.append(text)
+            seen.add(text)
+        if sort_items:
+            texts.sort(key=_natural_sort_key)
+        current = combo.currentText() if combo.count() else ""
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("(Wszystkie)")
+        for text in texts:
+            combo.addItem(text)
+        if current and combo.findText(current) >= 0:
+            combo.setCurrentIndex(combo.findText(current))
+        else:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+
+    def _populate_param_line_filters(self):
+        if not hasattr(self, 'param_line_machine'):
+            return
+        snaps = getattr(self, 'param_snapshots', [])
+        machines = {s.machine for s in snaps}
+        pins = {s.pin for s in snaps if s.pin}
+        steps = {str(s.step) for s in snaps if s.step is not None}
+        self._set_combo_items(self.param_line_machine, machines)
+        self._set_combo_items(self.param_line_pin, pins)
+        self._set_combo_items(self.param_line_step, steps)
+
+    def _apply_param_line_filters(self):
+        charts = getattr(self, 'param_line_charts', {})
+        if not charts:
+            return
+        snaps = getattr(self, 'param_snapshots', [])
+        machine = self.param_line_machine.currentText() if self.param_line_machine.count() else "(Wszystkie)"
+        pin = self.param_line_pin.currentText() if self.param_line_pin.count() else "(Wszystkie)"
+        step = self.param_line_step.currentText() if self.param_line_step.count() else "(Wszystkie)"
+
+        for name, chart in charts.items():
+            points: list[tuple[datetime, float]] = []
+            for snap in snaps:
+                if machine and machine != "(Wszystkie)" and snap.machine != machine:
+                    continue
+                if pin and pin != "(Wszystkie)" and str(snap.pin or "") != pin:
+                    continue
+                if step and step != "(Wszystkie)" and str(snap.step) != step:
+                    continue
+                if name != STEP_SPEED_LABEL and not snap.included.get(name, False):
+                    continue
+                value = snap.values.get(name)
+                if value is None:
+                    continue
+                try:
+                    val = float(value)
+                except Exception:
+                    continue
+                if math.isnan(val) or math.isinf(val):
+                    continue
+                points.append((snap.dt, val))
+            chart.set_series(name, points, self._param_line_colors.get(name))
+
+    def _clear_param_line_charts(self) -> None:
+        charts = getattr(self, 'param_line_charts', {})
+        if not charts:
+            return
+        for name, chart in charts.items():
+            chart.set_series(name, [], self._param_line_colors.get(name))
+
+    def _populate_index_line_filters(self):
+        if not hasattr(self, 'index_line_machine'):
+            return
+        snaps = getattr(self, 'index_snapshots', [])
+        machines = {s.machine for s in snaps}
+        tables = {s.table for s in snaps if s.table}
+        steps = {str(s.step) for s in snaps if s.step is not None}
+        self._set_combo_items(self.index_line_machine, machines)
+        self._set_combo_items(self.index_line_pin, tables)
+        self._set_combo_items(self.index_line_step, steps)
+
+    def _apply_index_line_filters(self):
+        charts = getattr(self, 'index_line_charts', {})
+        if not charts:
+            return
+        snaps = getattr(self, 'index_snapshots', [])
+        machine = self.index_line_machine.currentText() if self.index_line_machine.count() else "(Wszystkie)"
+        table = self.index_line_pin.currentText() if self.index_line_pin.count() else "(Wszystkie)"
+        step = self.index_line_step.currentText() if self.index_line_step.count() else "(Wszystkie)"
+
+        for name, chart in charts.items():
+            points: list[tuple[datetime, float]] = []
+            for snap in snaps:
+                if machine and machine != "(Wszystkie)" and snap.machine != machine:
+                    continue
+                if table and table != "(Wszystkie)" and str(snap.table or "") != table:
+                    continue
+                if step and step != "(Wszystkie)" and str(snap.step) != step:
+                    continue
+                if name == INDEX_OVERRIDE_LABEL:
+                    value = snap.override
+                else:
+                    if not snap.included.get(name, False):
+                        continue
+                    value = snap.values.get(name)
+                if value is None:
+                    continue
+                try:
+                    val = float(value)
+                except Exception:
+                    continue
+                if math.isnan(val) or math.isinf(val):
+                    continue
+                points.append((snap.dt, val))
+            chart.set_series(name, points, self._index_line_colors.get(name))
+
+    def _clear_index_line_charts(self) -> None:
+        charts = getattr(self, 'index_line_charts', {})
+        if not charts:
+            return
+        for name, chart in charts.items():
+            chart.set_series(name, [], self._index_line_colors.get(name))
+
     def _populate_index_filters(self):
         events = getattr(self, 'index_events', [])
-        machines = sorted({e['machine'] for e in events})
-        tables = sorted({e['table'] for e in events})
-        steps = sorted({e['step'] for e in events})
+        machines = {e.get('machine', '') for e in events if e.get('machine')}
+        tables = {e.get('table', '') for e in events if e.get('table')}
+        steps = {e.get('step') for e in events if e.get('step') is not None}
         params = INDEX_PARAM_DISPLAY_ORDER
 
-        def fill(cb, items):
-            prev = cb.currentText() if cb.count() else ""
-            cb.blockSignals(True)
-            cb.clear()
-            cb.addItem("(Wszystkie)")
-            for it in items:
-                cb.addItem(str(it))
-            ix = cb.findText(prev)
-            if ix >= 0:
-                cb.setCurrentIndex(ix)
-            cb.blockSignals(False)
-
-        fill(self.idx_f_machine, machines)
-        fill(self.idx_f_table, tables)
-        fill(self.idx_f_step, steps)
-        fill(self.idx_f_param, params)
+        self._set_combo_items(self.idx_f_machine, machines)
+        self._set_combo_items(self.idx_f_table, tables)
+        self._set_combo_items(self.idx_f_step, {str(s) for s in steps})
+        self._set_combo_items(self.idx_f_param, params, sort_items=False)
 
     def _apply_index_filters(self):
         if not hasattr(self, 'index_events'):
@@ -3260,46 +4257,22 @@ class ModernMainWindow(QMainWindow):
 
     def _populate_program_filters(self):
         rows = getattr(self, 'program_events', [])
-        machines = sorted({e['machine'] for e in rows})
-        olds = sorted({e['old_program'] for e in rows})
-        news = sorted({e['new_program'] for e in rows})
+        machines = {e.get('machine', '') for e in rows if e.get('machine')}
+        olds = {e.get('old_program', '') for e in rows if e.get('old_program')}
+        news = {e.get('new_program', '') for e in rows if e.get('new_program')}
 
-        def fill(cb, items):
-            prev = cb.currentText() if cb.count() else ""
-            cb.blockSignals(True)
-            cb.clear()
-            cb.addItem("(Wszystkie)")
-            for it in items:
-                cb.addItem(str(it))
-            ix = cb.findText(prev)
-            if ix >= 0:
-                cb.setCurrentIndex(ix)
-            cb.blockSignals(False)
-
-        fill(self.pg_f_machine, machines)
-        fill(self.pg_f_old, olds)
-        fill(self.pg_f_new, news)
+        self._set_combo_items(self.pg_f_machine, machines)
+        self._set_combo_items(self.pg_f_old, olds)
+        self._set_combo_items(self.pg_f_new, news)
 
     def _populate_trend_filters(self):
         rows = getattr(self, 'found_files', [])
-        machines = sorted({f.machine for f in rows})
+        machines = {f.machine for f in rows if f.machine}
         try:
             self._log(f"[Trends] _populate_trend_filters: machines={len(machines)}")
         except Exception:
             pass
-        def fill(cb, items):
-            prev = cb.currentText() if cb.count() else ""
-            cb.blockSignals(True)
-            cb.clear()
-            cb.addItem("(Wszystkie)")
-            for it in items:
-                cb.addItem(str(it))
-            ix = cb.findText(prev)
-            if ix >= 0:
-                cb.setCurrentIndex(ix)
-            cb.blockSignals(False)
-
-        fill(self.t_f_machine, machines)
+        self._set_combo_items(self.t_f_machine, machines)
 
     def _apply_trend_filters(self):
         rows = getattr(self, 'found_files', [])
@@ -3388,7 +4361,7 @@ class ModernMainWindow(QMainWindow):
 
             # Overlay NOK counts aligned to x_keys for selected machine
             try:
-                nok_rows = getattr(self, 'intranet_rows', [])
+                nok_rows = getattr(self, 'intranet_nok_rows', getattr(self, 'intranet_rows', []))
                 if nok_rows:
                     sel_machine = m if m and m != '(Wszystkie)' else ''
                     sel_prefix = sel_machine[:1].upper() if sel_machine else ''
