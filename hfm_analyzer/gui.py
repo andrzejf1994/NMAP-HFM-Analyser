@@ -1421,7 +1421,9 @@ class ModernMainWindow(QMainWindow):
         pc_filters = QHBoxLayout()
         pc_filters.setSpacing(8)
         self.param_line_machine = QComboBox()
+        self.param_line_machine.currentIndexChanged.connect(self._on_param_line_machine_changed)
         self.param_line_pin = QComboBox()
+        self.param_line_pin.currentIndexChanged.connect(self._on_param_line_pin_changed)
         self.param_line_step = QComboBox()
         self.param_line_generate = QPushButton("Generuj wykresy")
         self.param_line_generate.clicked.connect(self._apply_param_line_filters)
@@ -1473,7 +1475,9 @@ class ModernMainWindow(QMainWindow):
         ic_filters = QHBoxLayout()
         ic_filters.setSpacing(8)
         self.index_line_machine = QComboBox()
+        self.index_line_machine.currentIndexChanged.connect(self._on_index_line_machine_changed)
         self.index_line_pin = QComboBox()
+        self.index_line_pin.currentIndexChanged.connect(self._on_index_line_pin_changed)
         self.index_line_step = QComboBox()
         self.index_line_generate = QPushButton("Generuj wykresy")
         self.index_line_generate.clicked.connect(self._apply_index_line_filters)
@@ -1562,6 +1566,66 @@ class ModernMainWindow(QMainWindow):
         self.tabs.addTab(self.programs_tab, "Zmiany Programów")
 
 
+        self.param_card_tab = QWidget()
+        card_layout = QVBoxLayout(self.param_card_tab)
+        card_layout.setContentsMargins(12, 12, 12, 12)
+        card_layout.setSpacing(8)
+
+        card_filters = QHBoxLayout()
+        card_filters.setSpacing(8)
+        card_filters.addWidget(QLabel("Maszyna:"))
+        self.param_card_machine = QComboBox()
+        self.param_card_machine.setEnabled(False)
+        self.param_card_machine.currentIndexChanged.connect(self._on_param_card_machine_changed)
+        card_filters.addWidget(self.param_card_machine, 1)
+        card_filters.addWidget(QLabel("Data i godzina:"))
+        self.param_card_datetime = QComboBox()
+        self.param_card_datetime.setEnabled(False)
+        self.param_card_datetime.currentIndexChanged.connect(self._on_param_card_datetime_changed)
+        card_filters.addWidget(self.param_card_datetime, 1)
+        card_layout.addLayout(card_filters)
+
+        self.param_card_info = QLabel("Brak danych")
+        self.param_card_info.setStyleSheet("color:#2c3e50;font-weight:600;")
+        self.param_card_info.setWordWrap(True)
+        card_layout.addWidget(self.param_card_info)
+
+        param_headers = [
+            "Program",
+            "Tabela",
+            "Pin",
+            "Step",
+            "Angle",
+            "Nose Locking",
+            "Nose Translation",
+            "Rotation",
+            "Step Speed",
+            "Wire Feeding",
+            "X",
+            "Y",
+        ]
+        self.param_card_table = QTableWidget(0, len(param_headers))
+        self.param_card_table.setHorizontalHeaderLabels(param_headers)
+        self.param_card_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.param_card_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.param_card_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.param_card_table.verticalHeader().setVisible(False)
+        for ci in range(len(param_headers)):
+            self.param_card_table.horizontalHeader().setSectionResizeMode(ci, QHeaderView.ResizeToContents)
+        card_layout.addWidget(self.param_card_table, 1)
+
+        card_btns = QHBoxLayout()
+        card_btns.setSpacing(6)
+        card_btns.addStretch(1)
+        self.param_card_export_btn = QPushButton("Eksport CSV")
+        self.param_card_export_btn.setEnabled(False)
+        self.param_card_export_btn.clicked.connect(self._export_param_card_csv)
+        card_btns.addWidget(self.param_card_export_btn)
+        card_layout.addLayout(card_btns)
+
+        self.tabs.addTab(self.param_card_tab, "Karta parametrów")
+
+
         self.intra_tab = QWidget()
         intra_layout = QVBoxLayout(self.intra_tab)
         intra_layout.setContentsMargins(12, 12, 12, 12)
@@ -1648,10 +1712,16 @@ class ModernMainWindow(QMainWindow):
 
         self.param_snapshots: list[ParamSnapshot] = []
         self.index_snapshots: list[IndexSnapshot] = []
+        self.param_card_groups: dict[str, dict[datetime, list[ParamSnapshot]]] = {}
+        self.current_param_card_rows: list[ParamSnapshot] = []
+        self.param_card_selection: tuple[datetime, str] | None = None
+        self._param_line_hierarchy: dict[str, dict[str, set[str]]] = {}
+        self._index_line_hierarchy: dict[str, dict[str, set[str]]] = {}
         self._populate_param_line_filters()
         self._populate_index_line_filters()
         self._clear_param_line_charts()
         self._clear_index_line_charts()
+        self._populate_param_card_filters()
 
         root.addWidget(self.tabs)
 
@@ -1667,6 +1737,7 @@ class ModernMainWindow(QMainWindow):
         self.progress.setTextVisible(True)
         self.progress.setFormat("Przetwarzanie...")
         status.addPermanentWidget(self.progress, 1)
+        self._active_tasks: set[str] = set()
         self.status_label = QLabel("Gotowy")
         status.addPermanentWidget(self.status_label)
         self.thread_state = QLabel("Wątki: bezczynne")
@@ -1838,15 +1909,24 @@ class ModernMainWindow(QMainWindow):
                 pass
 
     def _browse_base_path(self):
+        old_path = self.settings.value("base_path", "", type=str)
         new_path = QFileDialog.getExistingDirectory(self, "Wskaż katalog bazowy z backupami")
         if new_path:
             self.settings.setValue("base_path", new_path)
+            if new_path != old_path:
+                self._reset_results_state(clear_found_files=True)
             self._refresh_base_path_label()
             self._populate_machines()
 
     def _open_settings(self):
+        old_path = self.settings.value("base_path", "", type=str)
+        old_line_id = self.settings.value("intranet_line_id", 436, type=int)
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec_() == QDialog.Accepted:
+            new_path = self.settings.value("base_path", "", type=str)
+            new_line_id = self.settings.value("intranet_line_id", 436, type=int)
+            if new_path != old_path or new_line_id != old_line_id:
+                self._reset_results_state(clear_found_files=True)
             self._refresh_base_path_label()
             self._populate_machines()
 
@@ -1867,51 +1947,11 @@ class ModernMainWindow(QMainWindow):
             return
 
 
+        self._reset_results_state(clear_found_files=True)
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
         self.status_label.setText("Trwa skanowanie...")
         self.scan_btn.setEnabled(False)
-
-        try:
-            if hasattr(self, 'stat_changes') and self.stat_changes is not None:
-                self.stat_changes.setText("Liczba zmian: 0")
-            if hasattr(self, 'stat_machines') and self.stat_machines is not None:
-                self.stat_machines.setText("Liczba maszyn: 0")
-        except Exception:
-            pass
-        if self.pie_view:
-            self.pie_view.setHtml("<html><head><meta charset='utf-8'></head><body style='font-family:Segoe UI;color:#7f8c8d;margin:12px;'>Brak danych</body></html>")
-        if self.line_view:
-            self.line_view.setHtml("<html><head><meta charset='utf-8'></head><body style='font-family:Segoe UI;color:#7f8c8d;margin:12px;'>Brak danych</body></html>")
-        if hasattr(self, 'pie_label') and self.pie_label is not None:
-            self.pie_label.setText("Brak danych")
-            self.pie_label.setPixmap(QPixmap())
-        if hasattr(self, 'line_label') and self.line_label is not None:
-            self.line_label.setText("Brak danych")
-            self.line_label.setPixmap(QPixmap())
-        if hasattr(self, 'pie_native') and self.pie_native is not None:
-            self.pie_native.set_data({})
-        if hasattr(self, 'line_native') and self.line_native is not None:
-            self.line_native.set_data([], {})
-        if hasattr(self, 'tree') and self.tree is not None:
-            self.tree.clear()
-        try:
-            self.intranet_rows = []
-            self.intranet_filtered_rows = []
-            self.intranet_all_rows = []
-            self.intranet_nok_rows = []
-            if hasattr(self, 'intra_table') and self.intra_table is not None:
-                self.intra_table.setRowCount(0)
-            if hasattr(self, 'bar_native') and self.bar_native is not None:
-                self.bar_native.set_overlay([], [])
-        except Exception:
-            pass
-        self.logs_tab.clear()
-        try:
-            if hasattr(self, 'table') and self.table is not None:
-                self.table.setRowCount(0)
-        except Exception:
-            pass
         try:
             self._log(f"[Scan] Start: {start_dt} -> {end_dt}; Wybrane maszyny: {len(selected)}")
         except Exception:
@@ -2665,6 +2705,10 @@ class ModernMainWindow(QMainWindow):
             self.intra_worker = None
         except Exception:
             pass
+        try:
+            self._set_task_active('intranet', False)
+        except Exception:
+            pass
 
         try:
             self.intranet_rows = []
@@ -2710,6 +2754,7 @@ class ModernMainWindow(QMainWindow):
             self.intra_worker.finished.connect(self._on_intranet_ready)
             self.intra_worker.error.connect(self._on_intranet_error)
             self.intra_worker.start()
+            self._set_task_active('intranet', True)
             try:
                 if self._is_worker_running('a_worker'):
                     self._update_thread_state('Wątki: analiza + intranet')
@@ -2719,6 +2764,10 @@ class ModernMainWindow(QMainWindow):
                 pass
         except Exception as ex:
             self._log(f"[Intranet] Skipping overlay: {ex}")
+            try:
+                self._set_task_active('intranet', False)
+            except Exception:
+                pass
 
     def _on_intranet_ready(self, data: dict):
         try:
@@ -3003,6 +3052,7 @@ class ModernMainWindow(QMainWindow):
 
             # Populate filters and fill table
             try:
+                self._rebuild_intranet_table(self.intranet_rows)
                 self._populate_intranet_filters()
                 self._apply_intranet_filters()
             except Exception:
@@ -3014,20 +3064,76 @@ class ModernMainWindow(QMainWindow):
         except Exception as ex:
             self._log(f"[Intranet] Overlay error: {ex}")
 
-        try:
-            if not self._is_worker_running('a_worker') and not self._is_worker_running('worker'):
-                self.progress.setVisible(False)
-                self.status_label.setText("Gotowy")
+        analysis_running = self._is_worker_running('a_worker')
+        worker_running = self._is_worker_running('worker')
+        self._set_task_active('intranet', False)
+        if not analysis_running and not worker_running:
+            self.status_label.setText("Gotowy")
+            try:
                 self._update_thread_state('Wątki: bezczynne')
-            else:
-                if self._is_worker_running('a_worker'):
+            except Exception:
+                pass
+            try:
+                self.analysis_run_btn.setEnabled(True)
+            except Exception:
+                pass
+        else:
+            if analysis_running:
+                try:
                     self._update_thread_state('Wątki: analiza')
-        except Exception:
-            pass
+                except Exception:
+                    pass
         try:
             self.intra_worker = None
         except Exception:
             pass
+    def _format_intranet_datetime(self, value) -> str:
+        if not value:
+            return ""
+        try:
+            if isinstance(value, datetime):
+                return value.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception:
+            pass
+        return str(value)
+
+    def _rebuild_intranet_table(self, rows: list[dict]) -> None:
+        table = getattr(self, 'intra_table', None)
+        if table is None:
+            return
+        table.setUpdatesEnabled(False)
+        table.setRowCount(len(rows))
+        for idx, record in enumerate(rows):
+            sap = record.get('maszyna_sap', '')
+            machine = record.get('maszyna_opis', '')
+            source_desc = record.get('source_opis', '')
+            source_map = record.get('source_mapped', '')
+            dt_txt = record.get('_display_date')
+            if not dt_txt:
+                dt_txt = self._format_intranet_datetime(record.get('data'))
+                record['_display_date'] = dt_txt
+            if dt_txt:
+                record['_date_lower'] = dt_txt.lower()
+            serial = record.get('serial_no', '')
+            record['_serial_lower'] = str(serial or '').lower()
+            judge = record.get('judge', '')
+            table.setItem(idx, 0, QTableWidgetItem(str(sap)))
+            table.setItem(idx, 1, QTableWidgetItem(str(machine)))
+            table.setItem(idx, 2, QTableWidgetItem(str(source_desc)))
+            table.setItem(idx, 3, QTableWidgetItem(str(source_map)))
+            table.setItem(idx, 4, QTableWidgetItem(dt_txt))
+            table.setItem(idx, 5, QTableWidgetItem(str(serial)))
+            table.setItem(idx, 6, QTableWidgetItem(str(judge)))
+            try:
+                table.setRowHidden(idx, False)
+            except Exception:
+                pass
+        table.setUpdatesEnabled(True)
+        try:
+            table.resizeColumnsToContents()
+        except Exception:
+            pass
+
     def _populate_intranet_filters(self):
         rows = getattr(self, 'intranet_rows', [])
         if not isinstance(rows, list):
@@ -3053,78 +3159,91 @@ class ModernMainWindow(QMainWindow):
         rows = getattr(self, 'intranet_rows', [])
         if not isinstance(rows, list):
             rows = []
-        machine_code = self.intra_f_machine_code.currentText() if self.intra_f_machine_code.count() else "(Wszystkie)"
-        machine_desc = self.intra_f_machine_desc.currentText() if self.intra_f_machine_desc.count() else "(Wszystkie)"
-        source_desc = self.intra_f_source_desc.currentText() if self.intra_f_source_desc.count() else "(Wszystkie)"
-        source_map = self.intra_f_source_map.currentText() if self.intra_f_source_map.count() else "(Wszystkie)"
-        judge_val = self.intra_f_judge.currentText() if self.intra_f_judge.count() else "(Wszystkie)"
-        date_filter = self.intra_f_date.text().strip().lower() if hasattr(self, 'intra_f_date') else ""
-        serial_filter = self.intra_f_serial.text().strip().lower() if hasattr(self, 'intra_f_serial') else ""
-        flt = []
-        for r in rows:
-            mapped = str(r.get('source_mapped', '') or '')
-            machine_val = str(r.get('maszyna_sap', '') or '')
-            machine_desc_val = str(r.get('maszyna_opis', '') or '')
-            source_desc_val = str(r.get('source_opis', '') or '')
-            judge = str(r.get('judge', '') or '')
+        table = getattr(self, 'intra_table', None)
+        if table is None:
+            self.intranet_filtered_rows = list(rows)
+            return
+        if table.rowCount() != len(rows):
+            self._rebuild_intranet_table(rows)
+        machine_code_combo = getattr(self, 'intra_f_machine_code', None)
+        machine_desc_combo = getattr(self, 'intra_f_machine_desc', None)
+        source_desc_combo = getattr(self, 'intra_f_source_desc', None)
+        source_map_combo = getattr(self, 'intra_f_source_map', None)
+        judge_combo = getattr(self, 'intra_f_judge', None)
+        machine_code = machine_code_combo.currentText() if machine_code_combo is not None and machine_code_combo.count() else "(Wszystkie)"
+        machine_desc = machine_desc_combo.currentText() if machine_desc_combo is not None and machine_desc_combo.count() else "(Wszystkie)"
+        source_desc = source_desc_combo.currentText() if source_desc_combo is not None and source_desc_combo.count() else "(Wszystkie)"
+        source_map = source_map_combo.currentText() if source_map_combo is not None and source_map_combo.count() else "(Wszystkie)"
+        judge_val = judge_combo.currentText() if judge_combo is not None and judge_combo.count() else "(Wszystkie)"
+        date_edit = getattr(self, 'intra_f_date', None)
+        serial_edit = getattr(self, 'intra_f_serial', None)
+        date_filter = date_edit.text().strip().lower() if date_edit is not None else ""
+        serial_filter = serial_edit.text().strip().lower() if serial_edit is not None else ""
+        filtered: list[dict] = []
+        table.setUpdatesEnabled(False)
+        for idx, record in enumerate(rows):
+            mapped = str(record.get('source_mapped', '') or '')
+            machine_val = str(record.get('maszyna_sap', '') or '')
+            machine_desc_val = str(record.get('maszyna_opis', '') or '')
+            source_desc_val = str(record.get('source_opis', '') or '')
+            judge = str(record.get('judge', '') or '')
+            match = True
             if machine_code and machine_code != "(Wszystkie)" and machine_val != machine_code:
-                continue
-            if machine_desc and machine_desc != "(Wszystkie)" and machine_desc_val != machine_desc:
-                continue
-            if source_desc and source_desc != "(Wszystkie)" and source_desc_val != source_desc:
-                continue
-            if source_map and source_map != "(Wszystkie)" and mapped != source_map:
-                continue
-            if judge_val and judge_val != "(Wszystkie)" and judge != judge_val:
-                continue
-            dt = r.get('data')
-            dt_txt = ''
-            if dt:
+                match = False
+            if match and machine_desc and machine_desc != "(Wszystkie)" and machine_desc_val != machine_desc:
+                match = False
+            if match and source_desc and source_desc != "(Wszystkie)" and source_desc_val != source_desc:
+                match = False
+            if match and source_map and source_map != "(Wszystkie)" and mapped != source_map:
+                match = False
+            if match and judge_val and judge_val != "(Wszystkie)" and judge != judge_val:
+                match = False
+            if match and date_filter:
+                date_lower = record.get('_date_lower')
+                if date_lower is None:
+                    dt_txt = record.get('_display_date') or self._format_intranet_datetime(record.get('data'))
+                    record['_display_date'] = dt_txt
+                    date_lower = (dt_txt or '').lower()
+                    record['_date_lower'] = date_lower
+                if date_filter not in (date_lower or ''):
+                    match = False
+            if match and serial_filter:
+                serial_lower = record.get('_serial_lower')
+                if serial_lower is None:
+                    serial_lower = str(record.get('serial_no', '') or '').lower()
+                    record['_serial_lower'] = serial_lower
+                if serial_filter not in serial_lower:
+                    match = False
+            if idx < table.rowCount():
                 try:
-                    dt_txt = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    table.setRowHidden(idx, not match)
                 except Exception:
-                    dt_txt = str(dt)
-            if date_filter and date_filter not in dt_txt.lower():
-                continue
-            serial_val = str(r.get('serial_no', '') or '')
-            if serial_filter and serial_filter not in serial_val.lower():
-                continue
-            flt.append(r)
-        self.intranet_filtered_rows = flt
-        # Fill intranet table
-        self.intra_table.setRowCount(len(flt))
-        for i, r in enumerate(flt):
-            self.intra_table.setItem(i, 0, QTableWidgetItem(r.get('maszyna_sap','')))
-            self.intra_table.setItem(i, 1, QTableWidgetItem(r.get('maszyna_opis','')))
-            self.intra_table.setItem(i, 2, QTableWidgetItem(r.get('source_opis','')))
-            self.intra_table.setItem(i, 3, QTableWidgetItem(r.get('source_mapped','')))
-            dt = r.get('data')
-            if dt:
-                try:
-                    dt_txt = dt.strftime('%Y-%m-%d %H:%M:%S')
-                except Exception:
-                    dt_txt = str(dt)
-            else:
-                dt_txt = ''
-            self.intra_table.setItem(i, 4, QTableWidgetItem(dt_txt))
-            self.intra_table.setItem(i, 5, QTableWidgetItem(r.get('serial_no','')))
-            self.intra_table.setItem(i, 6, QTableWidgetItem(r.get('judge','')))
-        try:
-            self.intra_table.resizeColumnsToContents()
-        except Exception:
-            pass
+                    pass
+            if match:
+                filtered.append(record)
+        table.setUpdatesEnabled(True)
+        self.intranet_filtered_rows = filtered
+
     def _on_intranet_error(self, err: str):
         self._log(f"[Intranet] Błąd pobierania: {err}. Pomijam overlay.")
-        try:
-            if not self._is_worker_running('a_worker') and not self._is_worker_running('worker'):
-                self.progress.setVisible(False)
-                self.status_label.setText("Gotowy")
+        analysis_running = self._is_worker_running('a_worker')
+        worker_running = self._is_worker_running('worker')
+        self._set_task_active('intranet', False)
+        if not analysis_running and not worker_running:
+            self.status_label.setText("Gotowy")
+            try:
                 self._update_thread_state('Wątki: bezczynne')
-            else:
-                if self._is_worker_running('a_worker'):
-                    self._update_thread_state('Wątki: analiza')
-        except Exception:
-            pass
+            except Exception:
+                pass
+            try:
+                self.analysis_run_btn.setEnabled(True)
+            except Exception:
+                pass
+        elif analysis_running:
+            try:
+                self._update_thread_state('Wątki: analiza')
+            except Exception:
+                pass
         try:
             self.intra_worker = None
         except Exception:
@@ -3196,6 +3315,310 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             return False
 
+    def _set_task_active(self, task: str, active: bool) -> None:
+        try:
+            tasks = getattr(self, '_active_tasks', set())
+        except Exception:
+            tasks = set()
+        if active:
+            if task not in tasks:
+                tasks.add(task)
+        else:
+            tasks.discard(task)
+        self._active_tasks = tasks
+        progress = getattr(self, 'progress', None)
+        if progress is None:
+            return
+        if tasks:
+            try:
+                progress.setRange(0, 0)
+            except Exception:
+                pass
+            try:
+                progress.setVisible(True)
+            except Exception:
+                pass
+        else:
+            try:
+                progress.setRange(0, 1)
+                progress.setValue(0)
+            except Exception:
+                pass
+            try:
+                progress.setVisible(False)
+                progress.setFormat("Przetwarzanie...")
+            except Exception:
+                pass
+
+    def _reset_results_state(self, *, clear_found_files: bool = False) -> None:
+        progress = getattr(self, 'progress', None)
+        if progress is not None:
+            try:
+                progress.setRange(0, 1)
+                progress.setValue(0)
+                progress.setVisible(False)
+                progress.setFormat("Przetwarzanie...")
+            except Exception:
+                pass
+        status = getattr(self, 'status_label', None)
+        if status is not None:
+            try:
+                status.setText("Gotowe")
+            except Exception:
+                pass
+        try:
+            self._active_tasks = set()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'thread_state') and self.thread_state is not None:
+                self.thread_state.setText('Wątki: bezczynne')
+        except Exception:
+            pass
+        if clear_found_files:
+            try:
+                self.found_files = []
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'analysis_run_btn') and self.analysis_run_btn is not None:
+                    self.analysis_run_btn.setEnabled(False)
+            except Exception:
+                pass
+        try:
+            self.analysis_records = []
+        except Exception:
+            pass
+        try:
+            self.analysis_filtered_rows = []
+        except Exception:
+            pass
+        analysis_table = getattr(self, 'analysis_table', None)
+        if analysis_table is not None:
+            try:
+                analysis_table.setRowCount(0)
+            except Exception:
+                pass
+        try:
+            self.param_snapshots = []
+        except Exception:
+            pass
+        try:
+            self.index_snapshots = []
+        except Exception:
+            pass
+        try:
+            self.index_events = []
+            self.index_filtered_rows = []
+        except Exception:
+            pass
+        index_table = getattr(self, 'index_table', None)
+        if index_table is not None:
+            try:
+                index_table.setRowCount(0)
+            except Exception:
+                pass
+        try:
+            self.program_events = []
+            self.program_filtered_rows = []
+        except Exception:
+            pass
+        program_table = getattr(self, 'program_table', None)
+        if program_table is not None:
+            try:
+                program_table.setRowCount(0)
+            except Exception:
+                pass
+        top_tree = getattr(self, 'top_issues_tree', None)
+        if top_tree is not None:
+            try:
+                top_tree.clear()
+            except Exception:
+                pass
+        change_tree = getattr(self, 'change_tree', None)
+        if change_tree is not None:
+            try:
+                change_tree.clear()
+            except Exception:
+                pass
+        try:
+            if hasattr(self, 'stat_changes') and self.stat_changes is not None:
+                self.stat_changes.setText('Liczba zmian: 0')
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'stat_machines') and self.stat_machines is not None:
+                self.stat_machines.setText('Liczba maszyn: 0')
+        except Exception:
+            pass
+        pie_view = getattr(self, 'pie_view', None)
+        if pie_view and clear_found_files:
+            try:
+                pie_view.setHtml("<html><head><meta charset='utf-8'></head><body style='font-family:Segoe UI;color:#7f8c8d;margin:12px;'>Brak danych</body></html>")
+            except Exception:
+                pass
+        line_view = getattr(self, 'line_view', None)
+        if line_view and clear_found_files:
+            try:
+                line_view.setHtml("<html><head><meta charset='utf-8'></head><body style='font-family:Segoe UI;color:#7f8c8d;margin:12px;'>Brak danych</body></html>")
+            except Exception:
+                pass
+        pie_label = getattr(self, 'pie_label', None)
+        if pie_label is not None and clear_found_files:
+            try:
+                pie_label.setText('Brak danych')
+                pie_label.setPixmap(QPixmap())
+            except Exception:
+                pass
+        line_label = getattr(self, 'line_label', None)
+        if line_label is not None and clear_found_files:
+            try:
+                line_label.setText('Brak danych')
+                line_label.setPixmap(QPixmap())
+            except Exception:
+                pass
+        pie_native = getattr(self, 'pie_native', None)
+        if pie_native is not None and clear_found_files:
+            try:
+                pie_native.set_data({})
+            except Exception:
+                pass
+        line_native = getattr(self, 'line_native', None)
+        if line_native is not None and clear_found_files:
+            try:
+                line_native.set_data([], {})
+            except Exception:
+                pass
+        tree = getattr(self, 'tree', None)
+        if tree is not None and clear_found_files:
+            try:
+                tree.clear()
+            except Exception:
+                pass
+        summary_table = getattr(self, 'table', None)
+        if summary_table is not None:
+            try:
+                summary_table.setRowCount(0)
+            except Exception:
+                pass
+        try:
+            self.intranet_rows = []
+            self.intranet_filtered_rows = []
+            self.intranet_all_rows = []
+            self.intranet_nok_rows = []
+        except Exception:
+            pass
+        intra_table = getattr(self, 'intra_table', None)
+        if intra_table is not None:
+            try:
+                intra_table.setRowCount(0)
+            except Exception:
+                pass
+        bar_native = getattr(self, 'bar_native', None)
+        if bar_native is not None:
+            try:
+                bar_native.set_overlay([], [])
+            except Exception:
+                pass
+        try:
+            if hasattr(self, 'logs_tab') and self.logs_tab is not None:
+                self.logs_tab.clear()
+        except Exception:
+            pass
+        for line_edit_name in ('intra_f_date', 'intra_f_serial'):
+            line_edit = getattr(self, line_edit_name, None)
+            if line_edit is not None:
+                try:
+                    line_edit.blockSignals(True)
+                    line_edit.clear()
+                    line_edit.blockSignals(False)
+                except Exception:
+                    pass
+        for combo_name in (
+            'intra_f_machine_code',
+            'intra_f_machine_desc',
+            'intra_f_source_desc',
+            'intra_f_source_map',
+            'intra_f_judge',
+            'f_machine',
+            'f_pin',
+            'f_step',
+            'f_param',
+            'param_line_machine',
+            'param_line_pin',
+            'param_line_step',
+            'index_line_machine',
+            'index_line_pin',
+            'index_line_step',
+            'pg_f_machine',
+            'pg_f_old',
+            'pg_f_new',
+            't_f_machine',
+            'idx_f_machine',
+            'idx_f_table',
+            'idx_f_step',
+            'idx_f_param',
+        ):
+            combo = getattr(self, combo_name, None)
+            if combo is not None:
+                try:
+                    combo.blockSignals(True)
+                    combo.clear()
+                    combo.blockSignals(False)
+                except Exception:
+                    pass
+        self._param_line_hierarchy = {}
+        self._index_line_hierarchy = {}
+        try:
+            self._clear_param_line_charts()
+        except Exception:
+            pass
+        try:
+            self._clear_index_line_charts()
+        except Exception:
+            pass
+        self.param_card_groups = {}
+        self.param_card_selection = None
+        self.current_param_card_rows = []
+        card_info = getattr(self, 'param_card_info', None)
+        if card_info is not None:
+            try:
+                card_info.setText('Brak danych')
+            except Exception:
+                pass
+        card_table = getattr(self, 'param_card_table', None)
+        if card_table is not None:
+            try:
+                card_table.setRowCount(0)
+            except Exception:
+                pass
+        export_btn = getattr(self, 'param_card_export_btn', None)
+        if export_btn is not None:
+            try:
+                export_btn.setEnabled(False)
+            except Exception:
+                pass
+        dt_combo = getattr(self, 'param_card_datetime', None)
+        machine_combo = getattr(self, 'param_card_machine', None)
+        if dt_combo is not None:
+            try:
+                dt_combo.blockSignals(True)
+                dt_combo.clear()
+                dt_combo.addItem('(Brak danych)')
+                dt_combo.setEnabled(False)
+                dt_combo.blockSignals(False)
+            except Exception:
+                pass
+        if machine_combo is not None:
+            try:
+                machine_combo.blockSignals(True)
+                machine_combo.clear()
+                machine_combo.addItem('(Brak danych)')
+                machine_combo.setEnabled(False)
+                machine_combo.blockSignals(False)
+            except Exception:
+                pass
+
     def _update_thread_state(self, text: str):
         try:
             if hasattr(self, 'thread_state') and self.thread_state is not None:
@@ -3222,7 +3645,8 @@ class ModernMainWindow(QMainWindow):
                         w.wait(3000)
                     except Exception:
                         pass
-            self.progress.setVisible(False)
+            self._set_task_active('analysis', False)
+            self._set_task_active('intranet', False)
             self.status_label.setText('Zatrzymano')
             self._update_thread_state('Wątki: bezczynne')
             try:
@@ -3245,10 +3669,12 @@ class ModernMainWindow(QMainWindow):
         if not analysis_files:
             QMessageBox.information(self, "Brak danych", "Brak plików do analizy.")
             return
+        self._reset_results_state(clear_found_files=False)
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
         self.status_label.setText("Analiza zmian...")
         self.analysis_run_btn.setEnabled(False)
+        self._set_task_active('analysis', True)
         self.analysis_table.setRowCount(0)
         self.analysis_records = []
         try:
@@ -3266,10 +3692,14 @@ class ModernMainWindow(QMainWindow):
         try:
             self.param_snapshots = []
             self.index_snapshots = []
+            self.param_card_groups = {}
+            self.current_param_card_rows = []
+            self.param_card_selection = None
             self._populate_param_line_filters()
             self._populate_index_line_filters()
             self._clear_param_line_charts()
             self._clear_index_line_charts()
+            self._populate_param_card_filters()
         except Exception:
             pass
 
@@ -3304,20 +3734,24 @@ class ModernMainWindow(QMainWindow):
             pass
 
     def _on_analysis_error(self, err: str):
-        if self._is_worker_running('intra_worker'):
+        self._set_task_active('analysis', False)
+        intra_running = self._is_worker_running('intra_worker')
+        if intra_running:
             self.status_label.setText("Błąd analizy (trwa pobieranie Intranetu)")
             try:
                 self._update_thread_state('Wątki: intranet')
             except Exception:
                 pass
         else:
-            self.progress.setVisible(False)
             self.status_label.setText("Błąd analizy")
             try:
                 self._update_thread_state('Wątki: bezczynne')
             except Exception:
                 pass
-        self.analysis_run_btn.setEnabled(True)
+        try:
+            self.analysis_run_btn.setEnabled(not intra_running)
+        except Exception:
+            pass
         QMessageBox.critical(self, "Błąd analizy", err)
         try:
             end = datetime.now()
@@ -3329,21 +3763,29 @@ class ModernMainWindow(QMainWindow):
             )
         except Exception:
             pass
+        try:
+            self.a_worker = None
+        except Exception:
+            pass
     def _on_analysis_finished(self, records):
-        if self._is_worker_running('intra_worker'):
+        self._set_task_active('analysis', False)
+        intra_running = self._is_worker_running('intra_worker')
+        if intra_running:
             self.status_label.setText("Analiza zakończona (trwa pobieranie Intranetu)")
             try:
                 self._update_thread_state('Wątki: intranet')
             except Exception:
                 pass
         else:
-            self.progress.setVisible(False)
             self.status_label.setText("Analiza zakończona")
             try:
                 self._update_thread_state('Wątki: bezczynne')
             except Exception:
                 pass
-        self.analysis_run_btn.setEnabled(True)
+        try:
+            self.analysis_run_btn.setEnabled(not intra_running)
+        except Exception:
+            pass
         try:
             end = datetime.now()
             start = getattr(self, 'analysis_started_at', None)
@@ -3363,6 +3805,12 @@ class ModernMainWindow(QMainWindow):
 
         snaps: list[ParamSnapshot] = sorted(param_records, key=lambda r: r.dt)
         self.param_snapshots = snaps
+        self.param_card_selection = None
+        self.current_param_card_rows = []
+        try:
+            self._populate_param_card_filters()
+        except Exception:
+            pass
         events = []
         prog_events = []
         seen_prog = set()
@@ -3513,6 +3961,10 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             pass
         try:
+            self.a_worker = None
+        except Exception:
+            pass
+        try:
             self._populate_index_line_filters()
             self._clear_index_line_charts()
         except Exception:
@@ -3597,7 +4049,11 @@ class ModernMainWindow(QMainWindow):
                 self.analysis_table.setItem(i, base + j, item)
 
             path_col_idx = base + len(params)
-            self.analysis_table.setItem(i, path_col_idx, QTableWidgetItem(e.get('path','')))
+            path_text = e.get('path', '') or ''
+            path_item = QTableWidgetItem(path_text)
+            if path_text:
+                path_item.setToolTip(path_text)
+            self.analysis_table.setItem(i, path_col_idx, path_item)
         self.analysis_table.resizeColumnsToContents()
         self.analysis_filtered_rows = rows
 
@@ -3630,21 +4086,75 @@ class ModernMainWindow(QMainWindow):
         if not hasattr(self, 'param_line_machine'):
             return
         snaps = getattr(self, 'param_snapshots', [])
-        machines = {s.machine for s in snaps}
-        pins = {s.pin for s in snaps if s.pin}
-        steps = {str(s.step) for s in snaps if s.step is not None}
-        self._set_combo_items(self.param_line_machine, machines)
+        hierarchy: dict[str, dict[str, set[str]]] = {}
+        for snap in snaps:
+            machine = (snap.machine or '').strip()
+            if not machine:
+                continue
+            machine_entry = hierarchy.setdefault(machine, {})
+            pin = (snap.pin or '').strip()
+            if pin:
+                step_set = machine_entry.setdefault(pin, set())
+            else:
+                step_set = machine_entry.setdefault('', set())
+            if snap.step is not None:
+                step_set.add(str(snap.step))
+        self._param_line_hierarchy = hierarchy
+        self._set_combo_items(self.param_line_machine, hierarchy.keys())
+        self._update_param_line_pin_options()
+
+    def _update_param_line_pin_options(self) -> None:
+        if not hasattr(self, 'param_line_machine'):
+            return
+        hierarchy = getattr(self, '_param_line_hierarchy', {}) or {}
+        machine = self.param_line_machine.currentText().strip() if self.param_line_machine.count() else ""
+        pins: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            pins.update(key for key in hierarchy.get(machine, {}).keys() if key)
+        else:
+            for machine_pins in hierarchy.values():
+                pins.update(key for key in machine_pins.keys() if key)
         self._set_combo_items(self.param_line_pin, pins)
+        self._update_param_line_step_options()
+
+    def _update_param_line_step_options(self) -> None:
+        if not hasattr(self, 'param_line_step'):
+            return
+        hierarchy = getattr(self, '_param_line_hierarchy', {}) or {}
+        machine = self.param_line_machine.currentText().strip() if self.param_line_machine.count() else ""
+        pin = self.param_line_pin.currentText().strip() if self.param_line_pin.count() else ""
+        steps: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            machine_pins = hierarchy.get(machine, {})
+            if pin and pin != "(Wszystkie)":
+                steps.update(machine_pins.get(pin, set()))
+            else:
+                for values in machine_pins.values():
+                    steps.update(values)
+        else:
+            if pin and pin != "(Wszystkie)":
+                for machine_pins in hierarchy.values():
+                    steps.update(machine_pins.get(pin, set()))
+            else:
+                for machine_pins in hierarchy.values():
+                    for values in machine_pins.values():
+                        steps.update(values)
         self._set_combo_items(self.param_line_step, steps)
+
+    def _on_param_line_machine_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_param_line_pin_options()
+
+    def _on_param_line_pin_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_param_line_step_options()
 
     def _apply_param_line_filters(self):
         charts = getattr(self, 'param_line_charts', {})
         if not charts:
             return
         snaps = getattr(self, 'param_snapshots', [])
-        machine = self.param_line_machine.currentText() if self.param_line_machine.count() else "(Wszystkie)"
-        pin = self.param_line_pin.currentText() if self.param_line_pin.count() else "(Wszystkie)"
-        step = self.param_line_step.currentText() if self.param_line_step.count() else "(Wszystkie)"
+        machine = self.param_line_machine.currentText().strip() if self.param_line_machine.count() else "(Wszystkie)"
+        pin = self.param_line_pin.currentText().strip() if self.param_line_pin.count() else "(Wszystkie)"
+        step = self.param_line_step.currentText().strip() if self.param_line_step.count() else "(Wszystkie)"
 
         for name, chart in charts.items():
             points: list[tuple[datetime, float]] = []
@@ -3676,25 +4186,321 @@ class ModernMainWindow(QMainWindow):
         for name, chart in charts.items():
             chart.set_series(name, [], self._param_line_colors.get(name))
 
+    def _populate_param_card_filters(self) -> None:
+        dt_combo = getattr(self, 'param_card_datetime', None)
+        machine_combo = getattr(self, 'param_card_machine', None)
+        if dt_combo is None or machine_combo is None:
+            return
+        snaps = getattr(self, 'param_snapshots', [])
+        groups: dict[str, dict[datetime, list[ParamSnapshot]]] = {}
+        for snap in snaps:
+            if not isinstance(snap, ParamSnapshot):
+                continue
+            dt = getattr(snap, 'dt', None)
+            if not isinstance(dt, datetime):
+                continue
+            machine_key = snap.machine or ''
+            machine_map = groups.setdefault(machine_key, {})
+            machine_map.setdefault(dt, []).append(snap)
+        self.param_card_groups = groups
+        self.param_card_selection = None
+        self.current_param_card_rows = []
+        dt_combo.blockSignals(True)
+        machine_combo.blockSignals(True)
+        dt_combo.clear()
+        machine_combo.clear()
+        dt_combo.setEnabled(False)
+        machine_combo.setEnabled(False)
+        if not groups:
+            machine_combo.addItem("(Brak danych)")
+            dt_combo.addItem("(Brak danych)")
+            dt_combo.blockSignals(False)
+            machine_combo.blockSignals(False)
+            self._set_param_card_group(None, None)
+            return
+        try:
+            machine_keys = sorted(groups.keys(), key=_natural_sort_key)
+        except Exception:
+            machine_keys = list(groups.keys())
+        for machine in machine_keys:
+            display = machine if machine else '-'
+            machine_combo.addItem(display, machine)
+        machine_combo.setEnabled(True)
+        machine_combo.blockSignals(False)
+        dt_combo.blockSignals(False)
+        if machine_combo.count():
+            machine_combo.setCurrentIndex(0)
+        else:
+            self._set_param_card_group(None, None)
+
+    def _on_param_card_datetime_changed(self, index: int) -> None:
+        dt_combo = getattr(self, 'param_card_datetime', None)
+        machine_combo = getattr(self, 'param_card_machine', None)
+        if dt_combo is None or machine_combo is None:
+            return
+        if index < 0:
+            self._set_param_card_group(None, None)
+            return
+        dt = dt_combo.itemData(index, Qt.UserRole)
+        if not isinstance(dt, datetime):
+            dt = dt_combo.itemData(index)
+        if not isinstance(dt, datetime):
+            self._set_param_card_group(None, None)
+            return
+        machine = machine_combo.currentData(Qt.UserRole)
+        if machine is None:
+            text = machine_combo.currentText()
+            machine = '' if text == '-' else text
+        machine_str = machine if isinstance(machine, str) else str(machine or '')
+        self._set_param_card_group(dt, machine_str)
+
+    def _update_param_card_datetime_options(self, machine_key: str) -> None:
+        dt_combo = getattr(self, 'param_card_datetime', None)
+        if dt_combo is None:
+            return
+        dt_combo.blockSignals(True)
+        dt_combo.clear()
+        groups = getattr(self, 'param_card_groups', {})
+        machine_map = groups.get(machine_key or '', {})
+        if not machine_map:
+            dt_combo.addItem("(Brak danych)")
+            dt_combo.setEnabled(False)
+            dt_combo.blockSignals(False)
+            self._set_param_card_group(None, None)
+            return
+        try:
+            sorted_datetimes = sorted(machine_map.keys(), reverse=True)
+        except Exception:
+            sorted_datetimes = list(machine_map.keys())
+        for dt in sorted_datetimes:
+            try:
+                label = dt.strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                label = str(dt)
+            dt_combo.addItem(label, dt)
+        dt_combo.setEnabled(True)
+        dt_combo.blockSignals(False)
+        if dt_combo.count():
+            dt_combo.setCurrentIndex(0)
+        else:
+            self._set_param_card_group(None, None)
+
+    def _on_param_card_machine_changed(self, index: int) -> None:
+        dt_combo = getattr(self, 'param_card_datetime', None)
+        machine_combo = getattr(self, 'param_card_machine', None)
+        if dt_combo is None or machine_combo is None:
+            return
+        if index < 0:
+            dt_combo.blockSignals(True)
+            dt_combo.clear()
+            dt_combo.addItem("(Brak danych)")
+            dt_combo.setEnabled(False)
+            dt_combo.blockSignals(False)
+            self._set_param_card_group(None, None)
+            return
+        machine = machine_combo.itemData(index, Qt.UserRole)
+        if machine is None:
+            text = machine_combo.itemText(index)
+            machine = '' if text == '-' else text
+        machine_key = machine if isinstance(machine, str) else str(machine or '')
+        self._update_param_card_datetime_options(machine_key)
+
+    def _set_param_card_group(self, dt: datetime | None, machine: str | None) -> None:
+        groups = getattr(self, 'param_card_groups', {})
+        snaps: list[ParamSnapshot] = []
+        if dt is not None and machine is not None:
+            try:
+                machine_key = machine or ''
+                snaps = list(groups.get(machine_key, {}).get(dt, []))
+            except Exception:
+                snaps = []
+        self.current_param_card_rows = snaps
+        self.param_card_selection = (dt, machine) if snaps else None
+        export_btn = getattr(self, 'param_card_export_btn', None)
+        if export_btn is not None:
+            export_btn.setEnabled(bool(snaps))
+        self._update_param_card_table(snaps)
+
+    def _update_param_card_table(self, snaps: list[ParamSnapshot] | None) -> None:
+        table = getattr(self, 'param_card_table', None)
+        info = getattr(self, 'param_card_info', None)
+        if table is None:
+            return
+        if not snaps:
+            table.setRowCount(0)
+            if info is not None:
+                info.setText("Brak danych")
+            return
+        try:
+            first = snaps[0]
+        except Exception:
+            table.setRowCount(0)
+            if info is not None:
+                info.setText("Brak danych")
+            return
+        try:
+            date_txt = first.dt.strftime('%Y-%m-%d')
+            time_txt = first.dt.strftime('%H:%M:%S')
+        except Exception:
+            date_txt = str(getattr(first, 'dt', ''))
+            time_txt = ''
+        machine = first.machine or '-'
+        programs = sorted({snap.program for snap in snaps if getattr(snap, 'program', '')})
+        tables = sorted({snap.table for snap in snaps if getattr(snap, 'table', '')})
+        pins = sorted({snap.pin for snap in snaps if getattr(snap, 'pin', '')})
+        steps = sorted({snap.step for snap in snaps if getattr(snap, 'step', None) is not None})
+        paths = sorted({snap.path for snap in snaps if getattr(snap, 'path', '')})
+        info_lines = [
+            f"Data: {date_txt}    Czas: {time_txt}".strip(),
+            f"Maszyna: {machine}    Migawek: {len(snaps)}",
+        ]
+        if programs:
+            info_lines.append(f"Programy: {', '.join(programs)}")
+        if tables:
+            info_lines.append(f"Tabele: {', '.join(tables)}")
+        info_lines.append(f"Piny: {len(pins)}    Stepy: {len(steps)}")
+        if paths:
+            if len(paths) == 1:
+                info_lines.append(f"Plik: {paths[0]}")
+            else:
+                info_lines.append(f"Pliki: {len(paths)} (np. {paths[0]})")
+        if info is not None:
+            info.setText("\n".join(info_lines))
+        try:
+            sorted_snaps = sorted(
+                snaps,
+                key=lambda s: (
+                    getattr(s, 'program', '') or '',
+                    getattr(s, 'table', '') or '',
+                    getattr(s, 'pin', '') or '',
+                    getattr(s, 'step', -1) if getattr(s, 'step', None) is not None else -1,
+                ),
+            )
+        except Exception:
+            sorted_snaps = list(snaps)
+        param_names = list(PARAM_DISPLAY_ORDER)
+        rows: list[list[str]] = []
+        for snap in sorted_snaps:
+            program = snap.program or '-'
+            table_name = snap.table or '-'
+            pin = snap.pin or '-'
+            step_val = snap.step if snap.step is not None else '-'
+            step_txt = str(step_val)
+            row_values: list[str] = [program, table_name, pin, step_txt]
+            for name in param_names:
+                row_values.append(self._param_card_cell_text(snap, name))
+            rows.append(row_values)
+        table.setUpdatesEnabled(False)
+        table.setRowCount(len(rows))
+        for row_idx, row_values in enumerate(rows):
+            for col_idx, value in enumerate(row_values):
+                table.setItem(row_idx, col_idx, QTableWidgetItem(value))
+        table.setUpdatesEnabled(True)
+        try:
+            table.resizeColumnsToContents()
+        except Exception:
+            pass
+
+    def _param_card_cell_text(self, snap: ParamSnapshot, name: str) -> str:
+        if name == STEP_SPEED_LABEL:
+            value = snap.values.get(name)
+            if value is None:
+                return ""
+            try:
+                return f"{value:g}"
+            except Exception:
+                return str(value)
+        include = bool(snap.included.get(name, False))
+        if not include:
+            return "wył."
+        value = snap.values.get(name)
+        if value is None:
+            value_txt = ""
+        else:
+            try:
+                value_txt = f"{value:g}"
+            except Exception:
+                value_txt = str(value)
+        mode = str(snap.modes.get(name, '') or '').upper()
+        if mode:
+            if value_txt:
+                return f"{value_txt} ({mode})"
+            return f"({mode})"
+        return value_txt
+
     def _populate_index_line_filters(self):
         if not hasattr(self, 'index_line_machine'):
             return
         snaps = getattr(self, 'index_snapshots', [])
-        machines = {s.machine for s in snaps}
-        tables = {s.table for s in snaps if s.table}
-        steps = {str(s.step) for s in snaps if s.step is not None}
-        self._set_combo_items(self.index_line_machine, machines)
+        hierarchy: dict[str, dict[str, set[str]]] = {}
+        for snap in snaps:
+            machine = (snap.machine or '').strip()
+            if not machine:
+                continue
+            machine_entry = hierarchy.setdefault(machine, {})
+            table = (snap.table or '').strip()
+            if table:
+                step_set = machine_entry.setdefault(table, set())
+            else:
+                step_set = machine_entry.setdefault('', set())
+            if snap.step is not None:
+                step_set.add(str(snap.step))
+        self._index_line_hierarchy = hierarchy
+        self._set_combo_items(self.index_line_machine, hierarchy.keys())
+        self._update_index_line_table_options()
+
+    def _update_index_line_table_options(self) -> None:
+        if not hasattr(self, 'index_line_machine'):
+            return
+        hierarchy = getattr(self, '_index_line_hierarchy', {}) or {}
+        machine = self.index_line_machine.currentText().strip() if self.index_line_machine.count() else ""
+        tables: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            tables.update(key for key in hierarchy.get(machine, {}).keys() if key)
+        else:
+            for machine_tables in hierarchy.values():
+                tables.update(key for key in machine_tables.keys() if key)
         self._set_combo_items(self.index_line_pin, tables)
+        self._update_index_line_step_options()
+
+    def _update_index_line_step_options(self) -> None:
+        if not hasattr(self, 'index_line_step'):
+            return
+        hierarchy = getattr(self, '_index_line_hierarchy', {}) or {}
+        machine = self.index_line_machine.currentText().strip() if self.index_line_machine.count() else ""
+        table = self.index_line_pin.currentText().strip() if self.index_line_pin.count() else ""
+        steps: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            machine_tables = hierarchy.get(machine, {})
+            if table and table != "(Wszystkie)":
+                steps.update(machine_tables.get(table, set()))
+            else:
+                for values in machine_tables.values():
+                    steps.update(values)
+        else:
+            if table and table != "(Wszystkie)":
+                for machine_tables in hierarchy.values():
+                    steps.update(machine_tables.get(table, set()))
+            else:
+                for machine_tables in hierarchy.values():
+                    for values in machine_tables.values():
+                        steps.update(values)
         self._set_combo_items(self.index_line_step, steps)
+
+    def _on_index_line_machine_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_index_line_table_options()
+
+    def _on_index_line_pin_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_index_line_step_options()
 
     def _apply_index_line_filters(self):
         charts = getattr(self, 'index_line_charts', {})
         if not charts:
             return
         snaps = getattr(self, 'index_snapshots', [])
-        machine = self.index_line_machine.currentText() if self.index_line_machine.count() else "(Wszystkie)"
-        table = self.index_line_pin.currentText() if self.index_line_pin.count() else "(Wszystkie)"
-        step = self.index_line_step.currentText() if self.index_line_step.count() else "(Wszystkie)"
+        machine = self.index_line_machine.currentText().strip() if self.index_line_machine.count() else "(Wszystkie)"
+        table = self.index_line_pin.currentText().strip() if self.index_line_pin.count() else "(Wszystkie)"
+        step = self.index_line_step.currentText().strip() if self.index_line_step.count() else "(Wszystkie)"
 
         for name, chart in charts.items():
             points: list[tuple[datetime, float]] = []
@@ -3790,7 +4596,11 @@ class ModernMainWindow(QMainWindow):
                 self.index_table.setItem(i, base + j, item)
 
             path_col_idx = base + len(params)
-            self.index_table.setItem(i, path_col_idx, QTableWidgetItem(e.get('path', '')))
+            path_text = e.get('path', '') or ''
+            path_item = QTableWidgetItem(path_text)
+            if path_text:
+                path_item.setToolTip(path_text)
+            self.index_table.setItem(i, path_col_idx, path_item)
         self.index_table.resizeColumnsToContents()
         self.index_filtered_rows = rows
 
@@ -3906,8 +4716,36 @@ class ModernMainWindow(QMainWindow):
         events.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
         return self._deduplicate_index_events(events)
 
+    @staticmethod
+    def _normalize_event_text(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return str(value).strip()
+
+    @staticmethod
+    def _event_dt_key(value: object):
+        if isinstance(value, datetime):
+            return value.replace(microsecond=0)
+        return value
+
+    def _merge_event_paths(self, existing: dict, duplicate: dict) -> None:
+        current = self._normalize_event_text(existing.get('path', ''))
+        new_path = self._normalize_event_text(duplicate.get('path', ''))
+        if not new_path:
+            return
+        if not current:
+            existing['path'] = new_path
+            return
+        paths = [p for p in (line.strip() for line in current.splitlines()) if p]
+        if new_path in paths:
+            return
+        paths.append(new_path)
+        existing['path'] = "\n".join(paths)
+
     def _deduplicate_param_events(self, events: list[dict]) -> list[dict]:
-        seen: set[tuple] = set()
+        seen: dict[tuple, dict] = {}
         deduped: list[dict] = []
         order = tuple(PARAM_DISPLAY_ORDER)
         for event in events:
@@ -3916,22 +4754,24 @@ class ModernMainWindow(QMainWindow):
                 continue
             cols = event.get('cols') or {}
             key = (
-                event.get('dt'),
-                event.get('machine'),
-                event.get('program'),
-                event.get('table'),
-                event.get('pin'),
-                event.get('step'),
-                tuple((name, cols.get(name, "")) for name in order),
+                self._event_dt_key(event.get('dt')),
+                self._normalize_event_text(event.get('machine')),
+                self._normalize_event_text(event.get('program')),
+                self._normalize_event_text(event.get('table')),
+                self._normalize_event_text(event.get('pin')),
+                self._normalize_event_text(event.get('step')),
+                tuple((name, self._normalize_event_text(cols.get(name, ""))) for name in order),
             )
-            if key in seen:
+            existing = seen.get(key)
+            if existing is not None:
+                self._merge_event_paths(existing, event)
                 continue
-            seen.add(key)
+            seen[key] = event
             deduped.append(event)
         return deduped
 
     def _deduplicate_index_events(self, events: list[dict]) -> list[dict]:
-        seen: set[tuple] = set()
+        seen: dict[tuple, dict] = {}
         deduped: list[dict] = []
         order = tuple(INDEX_PARAM_DISPLAY_ORDER)
         for event in events:
@@ -3940,16 +4780,18 @@ class ModernMainWindow(QMainWindow):
                 continue
             cols = event.get('cols') or {}
             key = (
-                event.get('dt'),
-                event.get('machine'),
-                event.get('program'),
-                event.get('table'),
-                event.get('step'),
-                tuple((name, cols.get(name, "")) for name in order),
+                self._event_dt_key(event.get('dt')),
+                self._normalize_event_text(event.get('machine')),
+                self._normalize_event_text(event.get('program')),
+                self._normalize_event_text(event.get('table')),
+                self._normalize_event_text(event.get('step')),
+                tuple((name, self._normalize_event_text(cols.get(name, ""))) for name in order),
             )
-            if key in seen:
+            existing = seen.get(key)
+            if existing is not None:
+                self._merge_event_paths(existing, event)
                 continue
-            seen.add(key)
+            seen[key] = event
             deduped.append(event)
         return deduped
 
@@ -4526,6 +5368,84 @@ class ModernMainWindow(QMainWindow):
                         e.get('old_program',''), e.get('new_program','')
                     ])
             self._log(f"[Export] Zapisano CSV: {path}")
+        except Exception as ex:
+            QMessageBox.critical(self, "Błąd eksportu", str(ex))
+
+    def _export_param_card_csv(self):
+        snaps = list(getattr(self, 'current_param_card_rows', []))
+        if not snaps:
+            QMessageBox.information(
+                self,
+                "Brak danych",
+                "Wybierz datę, godzinę i maszynę karty parametrów.",
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Zapisz CSV",
+            "karta_parametrow.csv",
+            "CSV Files (*.csv)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f, delimiter=';')
+                first = snaps[0]
+                try:
+                    date_txt = first.dt.strftime('%Y-%m-%d')
+                    time_txt = first.dt.strftime('%H:%M:%S')
+                except Exception:
+                    date_txt = str(getattr(first, 'dt', ''))
+                    time_txt = ''
+                machine = first.machine or ''
+                programs = sorted({snap.program for snap in snaps if getattr(snap, 'program', '')})
+                tables = sorted({snap.table for snap in snaps if getattr(snap, 'table', '')})
+                pins = sorted({snap.pin for snap in snaps if getattr(snap, 'pin', '')})
+                steps = sorted({snap.step for snap in snaps if getattr(snap, 'step', None) is not None})
+                paths = sorted({snap.path for snap in snaps if getattr(snap, 'path', '')})
+                w.writerow(["Data", date_txt, "Czas", time_txt])
+                w.writerow(["Maszyna", machine, "Migawek", len(snaps)])
+                w.writerow([
+                    "Programy",
+                    ", ".join(programs) if programs else '-',
+                ])
+                w.writerow([
+                    "Tabele",
+                    ", ".join(tables) if tables else '-',
+                ])
+                w.writerow(["Piny", len(pins), "Stepy", len(steps)])
+                if paths:
+                    if len(paths) == 1:
+                        w.writerow(["Plik", paths[0]])
+                    else:
+                        w.writerow(["Pliki", len(paths), "Przykład", paths[0]])
+                w.writerow([])
+                csv_headers = ["Program", "Tabela", "Pin", "Step"] + list(PARAM_DISPLAY_ORDER)
+                w.writerow(csv_headers)
+                try:
+                    sorted_snaps = sorted(
+                        snaps,
+                        key=lambda s: (
+                            getattr(s, 'program', '') or '',
+                            getattr(s, 'table', '') or '',
+                            getattr(s, 'pin', '') or '',
+                            getattr(s, 'step', -1) if getattr(s, 'step', None) is not None else -1,
+                        ),
+                    )
+                except Exception:
+                    sorted_snaps = snaps
+                for snap in sorted_snaps:
+                    program = snap.program or '-'
+                    table_name = snap.table or '-'
+                    pin = snap.pin or '-'
+                    step_val = snap.step if snap.step is not None else '-'
+                    step_txt = str(step_val)
+                    row = [program, table_name, pin, step_txt]
+                    for name in PARAM_DISPLAY_ORDER:
+                        row.append(self._param_card_cell_text(snap, name))
+                    w.writerow(row)
+            self._log(f"[Export] Zapisano kartę parametrów CSV: {path}")
         except Exception as ex:
             QMessageBox.critical(self, "Błąd eksportu", str(ex))
 
