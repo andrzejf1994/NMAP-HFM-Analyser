@@ -12,6 +12,7 @@ import string
 import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Iterable, List
 
 from PyQt5.QtCore import (
@@ -89,7 +90,7 @@ from .constants import (
     PARAM_DISPLAY_ORDER,
     SUMMARY_PALETTE,
 )
-from .models import FoundFile, IndexSnapshot, ParamSnapshot
+from .models import FoundFile, GripSnapshot, HairpinSnapshot, IndexSnapshot, ParamSnapshot
 from .utils import (
     extract_unc_share,
     list_mapped_network_drives,
@@ -101,6 +102,22 @@ from .workers import AnalyzeWorker, IntranetWorker, ScanWorker, STEP_SPEED_LABEL
 
 
 TRACKED_MACHINE_CODES: set[str] = {f"M{i}" for i in range(1, 7)} | {f"S{i}" for i in range(1, 7)}
+
+
+HAIRPIN_PARAM_LABELS: dict[str, str] = {
+    "r64GambaIniz": "DŁUGOŚĆ NÓŻKI POCZĄTKOWEJ",
+    "r64GambaFinale": "DŁUGOŚĆ NÓŻKI KOŃCOWEJ",
+    "r64LunghezzaStripIniziale": "OBSZAR ODIZOLOWANIA (POCZĄTEK)",
+    "r64LunghezzaStripFinale": "OBSZAR ODIZOLOWANIA (KONIEC)",
+    "r64OffsetStripIniziale": "POCZĄTEK ODIZOLOWANIA",
+    "r64OffsetStripFinale": "KONIEC ODIZOLOWANIA",
+    "r64LunghezzaHairpin": "DŁUGOŚĆ PINA",
+}
+
+HAIRPIN_PARAM_EXCLUDE: set[str] = {
+    "r64LunghezzaStripTaglioIniziale",
+    "r64LunghezzaStripTaglioFinale",
+}
 
 
 def _available_drive_letters() -> list[str]:
@@ -460,6 +477,222 @@ class BarChartWidget(QWidget):
                 painter.drawText(int(legend_x + 20), int(legend_y + 5 + len(names) * 16), "NOK")
             except Exception:
                 pass
+
+
+class ParetoChartWidget(QWidget):
+    """Simple Pareto chart that highlights dominant NOK sources."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._labels: list[str] = []
+        self._values: list[int] = []
+        self._cumulative: list[float] = []
+        self._series_names: list[str] = []
+        self._series_values: dict[str, list[int]] = {}
+        self._colors: dict[str, QColor] = {}
+        self.setMinimumHeight(260)
+
+    def set_data(self, data: dict[str, int] | None) -> None:
+        self._labels = []
+        self._values = []
+        self._cumulative = []
+        self._series_names = []
+        self._series_values = {}
+        self._colors = {}
+        if not data:
+            self.update()
+            return
+        nested: dict[str, dict[str, int]] = {}
+        is_nested = any(isinstance(value, dict) for value in data.values())
+        if is_nested:
+            for label, mapping in data.items():
+                if not isinstance(mapping, dict):
+                    continue
+                cleaned: dict[str, int] = {}
+                total_label = 0
+                for source, raw in mapping.items():
+                    try:
+                        count = int(raw)
+                    except Exception:
+                        continue
+                    if count == 0:
+                        continue
+                    name = str(source or "Nieznane").strip() or "Nieznane"
+                    cleaned[name] = cleaned.get(name, 0) + count
+                    total_label += count
+                if total_label > 0:
+                    nested[str(label)] = cleaned
+        else:
+            for label, raw in data.items():
+                try:
+                    count = int(raw)
+                except Exception:
+                    continue
+                if count == 0:
+                    continue
+                nested[str(label)] = {"Łącznie": count}
+        items: list[tuple[str, int, dict[str, int]]] = []
+        for label, mapping in nested.items():
+            total = sum(mapping.values())
+            if total <= 0:
+                continue
+            items.append((label, total, dict(mapping)))
+        if not items:
+            self.update()
+            return
+        items.sort(key=lambda pair: -pair[1])
+        total_sum = sum(value for _, value, _ in items) or 1
+        running = 0
+        cumulative: list[float] = []
+        for _, value, _ in items:
+            running += value
+            cumulative.append(min(100.0, (running / total_sum) * 100.0))
+        source_totals: dict[str, int] = defaultdict(int)
+        for _, _, mapping in items:
+            for source, count in mapping.items():
+                source_totals[source] += count
+        series_names = sorted(
+            source_totals.keys(),
+            key=lambda name: (-source_totals[name], _natural_sort_key(name)),
+        )
+        palette = [QColor(color) for color in SUMMARY_PALETTE]
+        self._labels = [label for label, _, _ in items]
+        self._values = [value for _, value, _ in items]
+        self._cumulative = cumulative
+        self._series_names = series_names
+        self._series_values = {
+            name: [mapping.get(name, 0) for _, _, mapping in items]
+            for name in series_names
+        }
+        self._colors = {
+            name: palette[idx % len(palette)] if palette else QColor("#3498db")
+            for idx, name in enumerate(series_names)
+        }
+        self.update()
+
+    def paintEvent(self, event) -> None:  # pragma: no cover - GUI painting
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor("white"))
+
+        outer = self.rect().adjusted(10, 10, -10, -10)
+        legend_width = 150
+        chart_rect = QRectF(
+            outer.left() + 40,
+            outer.top(),
+            max(10.0, outer.width() - 40 - legend_width - 20),
+            max(10.0, outer.height() - 40),
+        )
+
+        painter.setPen(QPen(QColor("#95a5a6"), 1))
+        painter.drawLine(chart_rect.bottomLeft(), chart_rect.bottomRight())
+        painter.drawLine(chart_rect.bottomLeft(), chart_rect.topLeft())
+
+        if not self._labels:
+            painter.setPen(QColor("#7f8c8d"))
+            painter.drawText(chart_rect, Qt.AlignCenter, "Brak danych")
+            return
+
+        y_max = max(self._values) if self._values else 1
+        y_max = max(1, y_max)
+
+        painter.setPen(QPen(QColor("#ecf0f1"), 1))
+        for i in range(1, 5):
+            y = chart_rect.bottom() - i * chart_rect.height() / 5
+            painter.drawLine(QPointF(chart_rect.left(), y), QPointF(chart_rect.right(), y))
+
+        painter.setPen(QColor("#2c3e50"))
+        for i in range(0, 6):
+            y = chart_rect.bottom() - i * chart_rect.height() / 5
+            value = int(round(y_max * i / 5))
+            painter.drawText(int(outer.left()), int(y - 8), 28, 16, Qt.AlignRight | Qt.AlignVCenter, str(value))
+
+        painter.drawText(int(outer.left() + 4), int(chart_rect.top() - 6), "Liczba NOK")
+        painter.drawText(int(chart_rect.right() + 12), int(chart_rect.top() - 6), "%")
+
+        bar_group_width = chart_rect.width() / max(1, len(self._labels))
+        bar_width = max(6.0, bar_group_width * 0.6)
+        label_stride = max(1, int(len(self._labels) / max(1, chart_rect.width() // 70)))
+
+        for index, label in enumerate(self._labels):
+            x = chart_rect.left() + index * bar_group_width + (bar_group_width - bar_width) / 2
+            y_bottom = chart_rect.bottom()
+            for series_name in self._series_names:
+                values = self._series_values.get(series_name, [])
+                if index >= len(values):
+                    continue
+                value = values[index]
+                if value <= 0:
+                    continue
+                height = (value / y_max) * chart_rect.height() if y_max else 0
+                y_top = y_bottom - height
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(self._colors.get(series_name, QColor("#2980b9")))
+                painter.drawRect(QRectF(x, y_top, bar_width, height))
+                y_bottom = y_top
+            if index % label_stride == 0:
+                text = str(label)
+                if len(text) > 12:
+                    top = text[:12]
+                    bottom = text[12:24]
+                else:
+                    top = text
+                    bottom = ""
+                painter.setPen(QColor("#2c3e50"))
+                painter.drawText(
+                    int(x - bar_group_width * 0.1),
+                    int(chart_rect.bottom() + 2),
+                    int(bar_group_width * 1.2),
+                    16,
+                    Qt.AlignCenter,
+                    top,
+                )
+                painter.drawText(
+                    int(x - bar_group_width * 0.1),
+                    int(chart_rect.bottom() + 18),
+                    int(bar_group_width * 1.2),
+                    16,
+                    Qt.AlignCenter,
+                    bottom,
+                )
+
+        cumulative_points: list[QPointF] = []
+        painter.setPen(QPen(QColor("#e74c3c"), 2))
+        for index, percentage in enumerate(self._cumulative):
+            x = chart_rect.left() + (index + 0.5) * bar_group_width
+            y = chart_rect.bottom() - (percentage / 100.0) * chart_rect.height()
+            cumulative_points.append(QPointF(x, y))
+        if cumulative_points:
+            for start, end in zip(cumulative_points, cumulative_points[1:]):
+                painter.drawLine(start, end)
+            painter.setBrush(QColor("#e74c3c"))
+            painter.setPen(Qt.NoPen)
+            for point in cumulative_points:
+                painter.drawEllipse(point, 4, 4)
+
+        legend_x = chart_rect.right() + 24
+        legend_y = outer.top() + 6
+        painter.setPen(QColor("#2c3e50"))
+        for idx, name in enumerate(self._series_names):
+            color = self._colors.get(name, QColor("#2980b9"))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawRect(QRectF(legend_x, legend_y + idx * 16 - 6, 12, 12))
+            painter.setPen(QColor("#2c3e50"))
+            painter.drawText(int(legend_x + 18), int(legend_y + idx * 16 + 4), name)
+
+        painter.setPen(QColor("#7f8c8d"))
+        for i in range(0, 6):
+            y = chart_rect.bottom() - i * chart_rect.height() / 5
+            percentage = int(round(100 * i / 5))
+            painter.drawText(
+                int(chart_rect.right() + 16),
+                int(y - 8),
+                32,
+                16,
+                Qt.AlignLeft | Qt.AlignVCenter,
+                f"{percentage}",
+            )
 
 
 class LineChartWidget(QWidget):
@@ -1146,7 +1379,16 @@ class ModernMainWindow(QMainWindow):
             QTreeWidget { border: 1px solid #e0e0e0; border-radius: 8px; }
             QHeaderView::section { background: #f5f6f7; padding:8px; border: none; font-weight: 600; }
             QTreeWidget::item { padding: 6px 8px; }
-            QTreeView::item:selected { background: transparent; outline: 1px solid #3498db; }
+            QTreeView::item:selected {
+                background: rgba(52, 152, 219, 80);
+                color: #2c3e50;
+            }
+            QTreeView::item:selected:active {
+                background: rgba(52, 152, 219, 110);
+            }
+            QTreeView::item:selected:!active {
+                background: rgba(52, 152, 219, 60);
+            }
             """
         )
         self.top_issues_tree.itemClicked.connect(self._on_top_issue_click)
@@ -1187,7 +1429,16 @@ class ModernMainWindow(QMainWindow):
             QTreeWidget { border: 1px solid #e0e0e0; border-radius: 8px; }
             QHeaderView::section { background: #f5f6f7; padding:8px; border: none; font-weight: 600; }
             QTreeWidget::item { padding: 6px 8px; }
-            QTreeView::item:selected { background: transparent; outline: 1px solid #3498db; }
+            QTreeView::item:selected {
+                background: rgba(52, 152, 219, 80);
+                color: #2c3e50;
+            }
+            QTreeView::item:selected:active {
+                background: rgba(52, 152, 219, 110);
+            }
+            QTreeView::item:selected:!active {
+                background: rgba(52, 152, 219, 60);
+            }
             """
         )
         self.change_tree.itemClicked.connect(self._on_change_tree_click)
@@ -1255,11 +1506,11 @@ class ModernMainWindow(QMainWindow):
         filt_row.setSpacing(8)
         self.f_machine = QComboBox()
         self.f_machine.setEditable(False)
-        self.f_machine.currentIndexChanged.connect(self._apply_analysis_filters)
+        self.f_machine.currentIndexChanged.connect(self._on_analysis_machine_changed)
         self.f_pin = QComboBox()
-        self.f_pin.currentIndexChanged.connect(self._apply_analysis_filters)
+        self.f_pin.currentIndexChanged.connect(self._on_analysis_pin_changed)
         self.f_step = QComboBox()
-        self.f_step.currentIndexChanged.connect(self._apply_analysis_filters)
+        self.f_step.currentIndexChanged.connect(self._on_analysis_step_changed)
         self.f_param = QComboBox()
         self.f_param.currentIndexChanged.connect(self._apply_analysis_filters)
 
@@ -1373,11 +1624,11 @@ class ModernMainWindow(QMainWindow):
         idx_filt = QHBoxLayout()
         idx_filt.setSpacing(8)
         self.idx_f_machine = QComboBox()
-        self.idx_f_machine.currentIndexChanged.connect(self._apply_index_filters)
+        self.idx_f_machine.currentIndexChanged.connect(self._on_index_machine_changed)
         self.idx_f_table = QComboBox()
-        self.idx_f_table.currentIndexChanged.connect(self._apply_index_filters)
+        self.idx_f_table.currentIndexChanged.connect(self._on_index_table_changed)
         self.idx_f_step = QComboBox()
-        self.idx_f_step.currentIndexChanged.connect(self._apply_index_filters)
+        self.idx_f_step.currentIndexChanged.connect(self._on_index_step_changed)
         self.idx_f_param = QComboBox()
         self.idx_f_param.currentIndexChanged.connect(self._apply_index_filters)
 
@@ -1626,6 +1877,62 @@ class ModernMainWindow(QMainWindow):
         self.tabs.addTab(self.param_card_tab, "Karta parametrów")
 
 
+        self.hp_grip_tab = QWidget()
+        grip_layout = QVBoxLayout(self.hp_grip_tab)
+        grip_layout.setContentsMargins(12, 12, 12, 12)
+        grip_layout.setSpacing(8)
+
+        grip_filters = QHBoxLayout()
+        grip_filters.setSpacing(8)
+        grip_filters.addWidget(QLabel("Maszyna:"))
+        self.hp_grip_machine = QComboBox()
+        self.hp_grip_machine.currentIndexChanged.connect(self._on_hp_grip_machine_changed)
+        grip_filters.addWidget(self.hp_grip_machine)
+        grip_filters.addWidget(QLabel("Pin:"))
+        self.hp_grip_pin = QComboBox()
+        self.hp_grip_pin.currentIndexChanged.connect(self._apply_hp_grip_filters)
+        grip_filters.addWidget(self.hp_grip_pin)
+        grip_filters.addStretch(1)
+        grip_layout.addLayout(grip_filters)
+
+        self.hp_grip_table = QTableWidget(0, 0)
+        self.hp_grip_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.hp_grip_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.hp_grip_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.hp_grip_table.setAlternatingRowColors(True)
+        grip_layout.addWidget(self.hp_grip_table, 1)
+
+        self.tabs.addTab(self.hp_grip_tab, "Wkładanie")
+
+
+        self.stripping_tab = QWidget()
+        strip_layout = QVBoxLayout(self.stripping_tab)
+        strip_layout.setContentsMargins(12, 12, 12, 12)
+        strip_layout.setSpacing(8)
+
+        strip_filters = QHBoxLayout()
+        strip_filters.setSpacing(8)
+        strip_filters.addWidget(QLabel("Maszyna:"))
+        self.stripping_machine = QComboBox()
+        self.stripping_machine.currentIndexChanged.connect(self._on_stripping_machine_changed)
+        strip_filters.addWidget(self.stripping_machine)
+        strip_filters.addWidget(QLabel("Pin:"))
+        self.stripping_pin = QComboBox()
+        self.stripping_pin.currentIndexChanged.connect(self._apply_stripping_filters)
+        strip_filters.addWidget(self.stripping_pin)
+        strip_filters.addStretch(1)
+        strip_layout.addLayout(strip_filters)
+
+        self.stripping_table = QTableWidget(0, 0)
+        self.stripping_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.stripping_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.stripping_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.stripping_table.setAlternatingRowColors(True)
+        strip_layout.addWidget(self.stripping_table, 1)
+
+        self.tabs.addTab(self.stripping_tab, "Odizolowanie")
+
+
         self.intra_tab = QWidget()
         intra_layout = QVBoxLayout(self.intra_tab)
         intra_layout.setContentsMargins(12, 12, 12, 12)
@@ -1704,6 +2011,38 @@ class ModernMainWindow(QMainWindow):
         self.intranet_nok_rows: list[dict] = []
 
 
+        self.pareto_tab = QWidget()
+        pareto_layout = QVBoxLayout(self.pareto_tab)
+        pareto_layout.setContentsMargins(12, 12, 12, 12)
+        pareto_layout.setSpacing(8)
+
+        pareto_filters = QHBoxLayout()
+        pareto_filters.setSpacing(8)
+        pareto_filters.addWidget(QLabel("Maszyna NOK:"))
+        self.pareto_machine_combo = QComboBox()
+        self.pareto_machine_combo.currentIndexChanged.connect(self._update_pareto_chart)
+        pareto_filters.addWidget(self.pareto_machine_combo)
+        pareto_filters.addWidget(QLabel("Filtr nazwy:"))
+        self.pareto_machine_filter = QLineEdit()
+        self.pareto_machine_filter.setPlaceholderText("Wpisz nazwę maszyny...")
+        try:
+            self.pareto_machine_filter.setClearButtonEnabled(True)
+        except Exception:
+            pass
+        self.pareto_machine_filter.textChanged.connect(self._update_pareto_chart)
+        pareto_filters.addWidget(self.pareto_machine_filter, 1)
+        pareto_filters.addStretch(1)
+        self.pareto_summary_label = QLabel("Brak danych")
+        self.pareto_summary_label.setStyleSheet("color:#2c3e50;font-weight:600;")
+        pareto_filters.addWidget(self.pareto_summary_label)
+        pareto_layout.addLayout(pareto_filters)
+
+        self.pareto_chart = ParetoChartWidget()
+        pareto_layout.addWidget(self.pareto_chart, 1)
+
+        self.tabs.addTab(self.pareto_tab, "Pareto NOK")
+
+
 
 
         self.logs_tab = QTextEdit()
@@ -1712,16 +2051,34 @@ class ModernMainWindow(QMainWindow):
 
         self.param_snapshots: list[ParamSnapshot] = []
         self.index_snapshots: list[IndexSnapshot] = []
+        self.hp_grip_snapshots: list[GripSnapshot] = []
+        self.hp_grip_events: list[dict] = []
+        self.hairpin_snapshots: list[HairpinSnapshot] = []
+        self.hairpin_events: list[dict] = []
         self.param_card_groups: dict[str, dict[datetime, list[ParamSnapshot]]] = {}
         self.current_param_card_rows: list[ParamSnapshot] = []
         self.param_card_selection: tuple[datetime, str] | None = None
         self._param_line_hierarchy: dict[str, dict[str, set[str]]] = {}
         self._index_line_hierarchy: dict[str, dict[str, set[str]]] = {}
+        self._analysis_filter_hierarchy: dict[str, dict[str, dict[str, set[str]]]] = {}
+        self._index_filter_hierarchy: dict[str, dict[str, dict[str, set[str]]]] = {}
+        self._hp_grip_value_keys: list[str] = []
+        self._hairpin_value_keys: list[str] = []
+        self._hp_grip_filter_hierarchy: dict[str, set[str]] = {}
+        self._hairpin_filter_hierarchy: dict[str, set[str]] = {}
+        self._hairpin_display_to_source: dict[str, str] = {}
+        self.hp_grip_filtered: list[dict] = []
+        self.hairpin_filtered: list[dict] = []
         self._populate_param_line_filters()
         self._populate_index_line_filters()
         self._clear_param_line_charts()
         self._clear_index_line_charts()
         self._populate_param_card_filters()
+        self._configure_hp_grip_table()
+        self._configure_stripping_table()
+        self._populate_hp_grip_filters()
+        self._populate_stripping_filters()
+        self._populate_pareto_filters()
 
         root.addWidget(self.tabs)
 
@@ -3058,6 +3415,10 @@ class ModernMainWindow(QMainWindow):
             except Exception:
                 pass
             try:
+                self._populate_pareto_filters()
+            except Exception:
+                pass
+            try:
                 self._render_summary()
             except Exception:
                 pass
@@ -3400,6 +3761,33 @@ class ModernMainWindow(QMainWindow):
             except Exception:
                 pass
         try:
+            self.hp_grip_snapshots = []
+            self.hp_grip_events = []
+            self.hairpin_snapshots = []
+            self.hairpin_events = []
+            self.hp_grip_events = []
+            self.hp_grip_filtered = []
+            self.hairpin_events = []
+            self.hairpin_filtered = []
+            self._hp_grip_value_keys = []
+            self._hairpin_value_keys = []
+            self._hp_grip_filter_hierarchy = {}
+            self._hairpin_filter_hierarchy = {}
+            self._hairpin_display_to_source = {}
+            self._configure_hp_grip_table()
+            self._configure_stripping_table()
+            self._populate_hp_grip_filters()
+            self._populate_stripping_filters()
+        except Exception:
+            pass
+        try:
+            self.pareto_chart.set_data({})
+            if hasattr(self, 'pareto_summary_label'):
+                self.pareto_summary_label.setText("Brak danych")
+            self._populate_pareto_filters()
+        except Exception:
+            pass
+        try:
             self.param_snapshots = []
         except Exception:
             pass
@@ -3506,6 +3894,7 @@ class ModernMainWindow(QMainWindow):
             self.intranet_filtered_rows = []
             self.intranet_all_rows = []
             self.intranet_nok_rows = []
+            self._populate_pareto_filters()
         except Exception:
             pass
         intra_table = getattr(self, 'intra_table', None)
@@ -3692,6 +4081,8 @@ class ModernMainWindow(QMainWindow):
         try:
             self.param_snapshots = []
             self.index_snapshots = []
+            self.hp_grip_snapshots = []
+            self.hairpin_snapshots = []
             self.param_card_groups = {}
             self.current_param_card_rows = []
             self.param_card_selection = None
@@ -3700,6 +4091,17 @@ class ModernMainWindow(QMainWindow):
             self._clear_param_line_charts()
             self._clear_index_line_charts()
             self._populate_param_card_filters()
+            self._hp_grip_value_keys = []
+            self._hairpin_value_keys = []
+            self._hp_grip_filter_hierarchy = {}
+            self._hairpin_filter_hierarchy = {}
+            self._hairpin_display_to_source = {}
+            self.hp_grip_filtered = []
+            self.hairpin_filtered = []
+            self._configure_hp_grip_table()
+            self._configure_stripping_table()
+            self._populate_hp_grip_filters()
+            self._populate_stripping_filters()
         except Exception:
             pass
 
@@ -3799,9 +4201,13 @@ class ModernMainWindow(QMainWindow):
         if isinstance(records, dict):
             param_records = list(records.get('params') or [])
             index_records = list(records.get('index') or [])
+            hp_grip_records = list(records.get('hp_grip') or [])
+            hairpin_records = list(records.get('hairpin') or [])
         else:
             param_records = list(records or [])
             index_records = []
+            hp_grip_records = []
+            hairpin_records = []
 
         snaps: list[ParamSnapshot] = sorted(param_records, key=lambda r: r.dt)
         self.param_snapshots = snaps
@@ -3809,6 +4215,22 @@ class ModernMainWindow(QMainWindow):
         self.current_param_card_rows = []
         try:
             self._populate_param_card_filters()
+        except Exception:
+            pass
+        try:
+            grip_snaps = sorted(hp_grip_records, key=lambda r: r.dt)
+            self.hp_grip_snapshots = grip_snaps
+            self.hp_grip_events = self._build_struct_change_events(grip_snaps)
+            self._refresh_hp_grip_columns()
+            self._populate_hp_grip_filters()
+        except Exception:
+            pass
+        try:
+            hairpin_snaps = sorted(hairpin_records, key=lambda r: r.dt)
+            self.hairpin_snapshots = hairpin_snaps
+            self.hairpin_events = self._build_struct_change_events(hairpin_snaps)
+            self._refresh_stripping_columns()
+            self._populate_stripping_filters()
         except Exception:
             pass
         events = []
@@ -3986,15 +4408,98 @@ class ModernMainWindow(QMainWindow):
     def _populate_analysis_filters(self):
 
         events = getattr(self, 'analysis_events', [])
-        machines = {e.get('machine', '') for e in events if e.get('machine')}
-        pins = {e.get('pin', '') for e in events if e.get('pin')}
-        steps = {e.get('step') for e in events if e.get('step') is not None}
-        params = PARAM_DISPLAY_ORDER
+        hierarchy: dict[str, dict[str, dict[str, set[str]]]] = {}
+        for event in events:
+            if event.get('type') != 'change':
+                continue
+            machine = str(event.get('machine', '') or '').strip()
+            pin = str(event.get('pin', '') or '').strip()
+            step_val = event.get('step')
+            step = str(step_val) if step_val is not None else ''
+            cols = event.get('cols') or {}
+            params = {name for name, text in cols.items() if text}
+            machine_entry = hierarchy.setdefault(machine, {})
+            pin_entry = machine_entry.setdefault(pin, {})
+            step_entry = pin_entry.setdefault(step, set())
+            if params:
+                step_entry.update(params)
+        self._analysis_filter_hierarchy = hierarchy
 
+        machines = [key for key in hierarchy.keys() if key]
         self._set_combo_items(self.f_machine, machines)
+        self._update_analysis_pin_options()
+
+    def _update_analysis_pin_options(self) -> None:
+        hierarchy = getattr(self, '_analysis_filter_hierarchy', {}) or {}
+        machine = self.f_machine.currentText().strip() if self.f_machine.count() else ""
+        pins: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            pins.update(key for key in hierarchy.get(machine, {}).keys() if key)
+        else:
+            for machine_pins in hierarchy.values():
+                pins.update(key for key in machine_pins.keys() if key)
         self._set_combo_items(self.f_pin, pins)
-        self._set_combo_items(self.f_step, {str(s) for s in steps})
-        self._set_combo_items(self.f_param, params, sort_items=False)
+        self._update_analysis_step_options()
+
+    def _update_analysis_step_options(self) -> None:
+        hierarchy = getattr(self, '_analysis_filter_hierarchy', {}) or {}
+        machine = self.f_machine.currentText().strip() if self.f_machine.count() else ""
+        pin = self.f_pin.currentText().strip() if self.f_pin.count() else ""
+        steps: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            machine_pins = hierarchy.get(machine, {})
+            if pin and pin != "(Wszystkie)":
+                steps.update(step for step in machine_pins.get(pin, {}).keys() if step)
+            else:
+                for pin_steps in machine_pins.values():
+                    steps.update(step for step in pin_steps.keys() if step)
+        else:
+            if pin and pin != "(Wszystkie)":
+                for machine_pins in hierarchy.values():
+                    steps.update(step for step in machine_pins.get(pin, {}).keys() if step)
+            else:
+                for machine_pins in hierarchy.values():
+                    for pin_steps in machine_pins.values():
+                        steps.update(step for step in pin_steps.keys() if step)
+        self._set_combo_items(self.f_step, steps)
+        self._update_analysis_param_options()
+
+    def _update_analysis_param_options(self) -> None:
+        hierarchy = getattr(self, '_analysis_filter_hierarchy', {}) or {}
+        machine = self.f_machine.currentText().strip() if self.f_machine.count() else ""
+        pin = self.f_pin.currentText().strip() if self.f_pin.count() else ""
+        step = self.f_step.currentText().strip() if self.f_step.count() else ""
+        params: set[str] = set()
+
+        def collect(machine_key: str, machine_pins: dict[str, dict[str, set[str]]]) -> None:
+            for pin_key, pin_steps in machine_pins.items():
+                if pin and pin != "(Wszystkie)" and pin_key != pin:
+                    continue
+                for step_key, param_set in pin_steps.items():
+                    if step and step != "(Wszystkie)" and step_key != step:
+                        continue
+                    params.update(param_set)
+
+        if machine and machine != "(Wszystkie)":
+            collect(machine, hierarchy.get(machine, {}))
+        else:
+            for machine_key, machine_pins in hierarchy.items():
+                collect(machine_key, machine_pins)
+
+        ordered = [name for name in PARAM_DISPLAY_ORDER if name in params]
+        self._set_combo_items(self.f_param, ordered, sort_items=False)
+
+    def _on_analysis_machine_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_analysis_pin_options()
+        self._apply_analysis_filters()
+
+    def _on_analysis_pin_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_analysis_step_options()
+        self._apply_analysis_filters()
+
+    def _on_analysis_step_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_analysis_param_options()
+        self._apply_analysis_filters()
 
     def _apply_analysis_filters(self):
         if not hasattr(self, 'analysis_events'):
@@ -4185,6 +4690,329 @@ class ModernMainWindow(QMainWindow):
             return
         for name, chart in charts.items():
             chart.set_series(name, [], self._param_line_colors.get(name))
+
+    def _refresh_hp_grip_columns(self) -> None:
+        keys: set[str] = set()
+        events = getattr(self, 'hp_grip_events', [])
+        if events:
+            for event in events:
+                for key in event.get('values', {}).keys():
+                    text = str(key or '').strip()
+                    if text:
+                        keys.add(text)
+        else:
+            for snap in getattr(self, 'hp_grip_snapshots', []):
+                if not isinstance(snap, GripSnapshot):
+                    continue
+                for key in getattr(snap, 'values', {}).keys():
+                    text = str(key or '').strip()
+                    if text:
+                        keys.add(text)
+        ordered = sorted(keys, key=_natural_sort_key)
+        self._hp_grip_value_keys = ordered
+        self._configure_hp_grip_table()
+
+    def _refresh_stripping_columns(self) -> None:
+        keys: set[str] = set()
+        events = getattr(self, 'hairpin_events', [])
+        if events:
+            for event in events:
+                for key in event.get('values', {}).keys():
+                    text = str(key or '').strip()
+                    if text:
+                        keys.add(text)
+        else:
+            for snap in getattr(self, 'hairpin_snapshots', []):
+                if not isinstance(snap, HairpinSnapshot):
+                    continue
+                for key in getattr(snap, 'values', {}).keys():
+                    text = str(key or '').strip()
+                    if text:
+                        keys.add(text)
+        ordered_sources = [
+            key
+            for key in sorted(keys, key=_natural_sort_key)
+            if key not in HAIRPIN_PARAM_EXCLUDE
+        ]
+        display_map: dict[str, str] = {}
+        ordered_display: list[str] = []
+        for source in ordered_sources:
+            display = HAIRPIN_PARAM_LABELS.get(source, source)
+            unique = display
+            if unique in display_map:
+                suffix = 2
+                while f"{display} ({suffix})" in display_map:
+                    suffix += 1
+                unique = f"{display} ({suffix})"
+            display_map[unique] = source
+            ordered_display.append(unique)
+        self._hairpin_value_keys = ordered_display
+        self._hairpin_display_to_source = display_map
+        self._configure_stripping_table()
+
+    def _configure_hp_grip_table(self) -> None:
+        table = getattr(self, 'hp_grip_table', None)
+        if table is None:
+            return
+        base_headers = ["Data", "Czas", "Maszyna", "Program", "Pin"]
+        columns = base_headers + list(getattr(self, '_hp_grip_value_keys', [])) + ["Ścieżka"]
+        table.setColumnCount(len(columns))
+        table.setHorizontalHeaderLabels(columns)
+        try:
+            table.setColumnHidden(len(columns) - 1, True)
+        except Exception:
+            pass
+        try:
+            header = table.horizontalHeader()
+            for idx in range(len(columns)):
+                header.setSectionResizeMode(idx, QHeaderView.ResizeToContents)
+        except Exception:
+            pass
+
+    def _configure_stripping_table(self) -> None:
+        table = getattr(self, 'stripping_table', None)
+        if table is None:
+            return
+        base_headers = ["Data", "Czas", "Maszyna", "Program", "Pin"]
+        columns = base_headers + list(getattr(self, '_hairpin_value_keys', [])) + ["Ścieżka"]
+        table.setColumnCount(len(columns))
+        table.setHorizontalHeaderLabels(columns)
+        try:
+            table.setColumnHidden(len(columns) - 1, True)
+        except Exception:
+            pass
+        try:
+            header = table.horizontalHeader()
+            for idx in range(len(columns)):
+                header.setSectionResizeMode(idx, QHeaderView.ResizeToContents)
+        except Exception:
+            pass
+
+    def _populate_hp_grip_filters(self) -> None:
+        if not hasattr(self, 'hp_grip_machine'):
+            return
+        events = getattr(self, 'hp_grip_events', [])
+        hierarchy: dict[str, set[str]] = {}
+        for event in events:
+            machine = str(event.get('machine', '') or '').strip()
+            pin = str(event.get('pin', '') or '').strip()
+            if not machine:
+                continue
+            machine_set = hierarchy.setdefault(machine, set())
+            if pin:
+                machine_set.add(pin)
+        self._hp_grip_filter_hierarchy = hierarchy
+        machines = [key for key in hierarchy.keys() if key]
+        self._set_combo_items(self.hp_grip_machine, machines)
+        self._update_hp_grip_pin_options()
+        self._apply_hp_grip_filters()
+
+    def _update_hp_grip_pin_options(self) -> None:
+        hierarchy = getattr(self, '_hp_grip_filter_hierarchy', {}) or {}
+        machine = self.hp_grip_machine.currentText().strip() if self.hp_grip_machine.count() else ""
+        pins: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            pins.update(hierarchy.get(machine, set()))
+        else:
+            for values in hierarchy.values():
+                pins.update(values)
+        self._set_combo_items(self.hp_grip_pin, pins)
+
+    def _on_hp_grip_machine_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_hp_grip_pin_options()
+        self._apply_hp_grip_filters()
+
+    def _apply_hp_grip_filters(self) -> None:
+        table = getattr(self, 'hp_grip_table', None)
+        if table is None:
+            return
+        events = getattr(self, 'hp_grip_events', [])
+        machine = self.hp_grip_machine.currentText() if self.hp_grip_machine.count() else "(Wszystkie)"
+        pin = self.hp_grip_pin.currentText() if self.hp_grip_pin.count() else "(Wszystkie)"
+        rows: list[dict] = []
+        for event in events:
+            if machine and machine != "(Wszystkie)" and event.get('machine') != machine:
+                continue
+            if pin and pin != "(Wszystkie)" and event.get('pin') != pin:
+                continue
+            rows.append(event)
+        rows.sort(key=lambda r: (r.get('dt'), r.get('machine'), r.get('pin')))
+        table.setRowCount(len(rows))
+        value_keys = list(getattr(self, '_hp_grip_value_keys', []))
+        highlight = QBrush(QColor('#dbeafe'))
+        for row_idx, event in enumerate(rows):
+            dt = event.get('dt')
+            table.setItem(row_idx, 0, QTableWidgetItem(dt.strftime('%Y-%m-%d') if isinstance(dt, datetime) else ''))
+            table.setItem(row_idx, 1, QTableWidgetItem(dt.strftime('%H:%M:%S') if isinstance(dt, datetime) else ''))
+            table.setItem(row_idx, 2, QTableWidgetItem(event.get('machine', '')))
+            table.setItem(row_idx, 3, QTableWidgetItem(event.get('program', '')))
+            table.setItem(row_idx, 4, QTableWidgetItem(event.get('pin', '')))
+            base = 5
+            for offset, key in enumerate(value_keys):
+                text = str(event.get('values', {}).get(key, ''))
+                item = QTableWidgetItem(text)
+                if text:
+                    item.setToolTip(text)
+                    item.setBackground(highlight)
+                table.setItem(row_idx, base + offset, item)
+            path_idx = base + len(value_keys)
+            path_txt = event.get('path', '') or ''
+            path_item = QTableWidgetItem(path_txt)
+            if path_txt:
+                path_item.setToolTip(path_txt)
+            table.setItem(row_idx, path_idx, path_item)
+        try:
+            table.resizeColumnsToContents()
+        except Exception:
+            pass
+        self.hp_grip_filtered = rows
+
+    def _populate_stripping_filters(self) -> None:
+        if not hasattr(self, 'stripping_machine'):
+            return
+        events = getattr(self, 'hairpin_events', [])
+        hierarchy: dict[str, set[str]] = {}
+        for event in events:
+            machine = str(event.get('machine', '') or '').strip()
+            pin = str(event.get('pin', '') or '').strip()
+            if not machine:
+                continue
+            machine_set = hierarchy.setdefault(machine, set())
+            if pin:
+                machine_set.add(pin)
+        self._hairpin_filter_hierarchy = hierarchy
+        machines = [key for key in hierarchy.keys() if key]
+        self._set_combo_items(self.stripping_machine, machines)
+        self._update_stripping_pin_options()
+        self._apply_stripping_filters()
+
+    def _update_stripping_pin_options(self) -> None:
+        hierarchy = getattr(self, '_hairpin_filter_hierarchy', {}) or {}
+        machine = self.stripping_machine.currentText().strip() if self.stripping_machine.count() else ""
+        pins: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            pins.update(hierarchy.get(machine, set()))
+        else:
+            for values in hierarchy.values():
+                pins.update(values)
+        self._set_combo_items(self.stripping_pin, pins)
+
+    def _on_stripping_machine_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_stripping_pin_options()
+        self._apply_stripping_filters()
+
+    def _apply_stripping_filters(self) -> None:
+        table = getattr(self, 'stripping_table', None)
+        if table is None:
+            return
+        events = getattr(self, 'hairpin_events', [])
+        machine = self.stripping_machine.currentText() if self.stripping_machine.count() else "(Wszystkie)"
+        pin = self.stripping_pin.currentText() if self.stripping_pin.count() else "(Wszystkie)"
+        rows: list[dict] = []
+        for event in events:
+            if machine and machine != "(Wszystkie)" and event.get('machine') != machine:
+                continue
+            if pin and pin != "(Wszystkie)" and event.get('pin') != pin:
+                continue
+            rows.append(event)
+        rows.sort(key=lambda r: (r.get('dt'), r.get('machine'), r.get('pin')))
+        table.setRowCount(len(rows))
+        value_keys = list(getattr(self, '_hairpin_value_keys', []))
+        display_map = getattr(self, '_hairpin_display_to_source', {}) or {}
+        highlight = QBrush(QColor('#dbeafe'))
+        for row_idx, event in enumerate(rows):
+            dt = event.get('dt')
+            table.setItem(row_idx, 0, QTableWidgetItem(dt.strftime('%Y-%m-%d') if isinstance(dt, datetime) else ''))
+            table.setItem(row_idx, 1, QTableWidgetItem(dt.strftime('%H:%M:%S') if isinstance(dt, datetime) else ''))
+            table.setItem(row_idx, 2, QTableWidgetItem(event.get('machine', '')))
+            table.setItem(row_idx, 3, QTableWidgetItem(event.get('program', '')))
+            table.setItem(row_idx, 4, QTableWidgetItem(event.get('pin', '')))
+            base = 5
+            for offset, key in enumerate(value_keys):
+                source_key = display_map.get(key, key)
+                raw_value = event.get('values', {}).get(source_key, '')
+                text = '' if raw_value is None else str(raw_value)
+                item = QTableWidgetItem(text)
+                if text:
+                    item.setToolTip(text)
+                    item.setBackground(highlight)
+                table.setItem(row_idx, base + offset, item)
+            path_idx = base + len(value_keys)
+            path_txt = event.get('path', '') or ''
+            path_item = QTableWidgetItem(path_txt)
+            if path_txt:
+                path_item.setToolTip(path_txt)
+            table.setItem(row_idx, path_idx, path_item)
+        try:
+            table.resizeColumnsToContents()
+        except Exception:
+            pass
+        self.hairpin_filtered = rows
+
+    def _pareto_target_label(self, row: dict) -> str:
+        if not isinstance(row, dict):
+            return ""
+        for key in ("maszyna_opis", "machine_actual", "sap_mapped", "maszyna_sap"):
+            text = str(row.get(key, '') or '').strip()
+            if text:
+                return text
+        return ""
+
+    def _pareto_source_label(self, row: dict) -> str:
+        if not isinstance(row, dict):
+            return ""
+        for key in ("source_opis", "machine_source", "source_mapped"):
+            text = str(row.get(key, '') or '').strip()
+            if text:
+                return text
+        return ""
+
+    def _populate_pareto_filters(self) -> None:
+        if not hasattr(self, 'pareto_machine_combo'):
+            return
+        rows = getattr(self, 'intranet_nok_rows', [])
+        machines = {self._pareto_target_label(r) for r in rows}
+        machines = {m for m in machines if m}
+        self._set_combo_items(self.pareto_machine_combo, machines)
+        self._update_pareto_chart()
+
+    def _update_pareto_chart(self) -> None:
+        chart = getattr(self, 'pareto_chart', None)
+        if chart is None:
+            return
+        rows = getattr(self, 'intranet_nok_rows', [])
+        if not rows:
+            chart.set_data({})
+            if hasattr(self, 'pareto_summary_label'):
+                self.pareto_summary_label.setText("Brak danych")
+            return
+        machine = self.pareto_machine_combo.currentText() if self.pareto_machine_combo.count() else "(Wszystkie)"
+        filter_edit = getattr(self, 'pareto_machine_filter', None)
+        name_filter = filter_edit.text().strip().lower() if filter_edit is not None else ""
+        nested: dict[str, dict[str, int]] = {}
+        for row in rows:
+            target = self._pareto_target_label(row) or "Nieznana maszyna"
+            if machine and machine != "(Wszystkie)" and target != machine:
+                continue
+            source = self._pareto_source_label(row) or "Nieznane źródło"
+            if name_filter and name_filter not in target.lower() and name_filter not in source.lower():
+                continue
+            source_map = nested.setdefault(source, {})
+            source_map[target] = source_map.get(target, 0) + 1
+        effective = {label: mapping for label, mapping in nested.items() if sum(mapping.values()) > 0}
+        if not effective:
+            chart.set_data({})
+            if hasattr(self, 'pareto_summary_label'):
+                self.pareto_summary_label.setText("Brak danych")
+            return
+        chart.set_data(effective)
+        if hasattr(self, 'pareto_summary_label'):
+            total = sum(sum(mapping.values()) for mapping in effective.values())
+            source_count = len(effective)
+            target_count = len({name for mapping in effective.values() for name in mapping.keys()})
+            self.pareto_summary_label.setText(
+                f"Łącznie NOK: {total} | Źródła: {source_count} | Maszyny NOK: {target_count}"
+            )
 
     def _populate_param_card_filters(self) -> None:
         dt_combo = getattr(self, 'param_card_datetime', None)
@@ -4537,15 +5365,105 @@ class ModernMainWindow(QMainWindow):
 
     def _populate_index_filters(self):
         events = getattr(self, 'index_events', [])
-        machines = {e.get('machine', '') for e in events if e.get('machine')}
-        tables = {e.get('table', '') for e in events if e.get('table')}
-        steps = {e.get('step') for e in events if e.get('step') is not None}
-        params = INDEX_PARAM_DISPLAY_ORDER
+        hierarchy: dict[str, dict[str, dict[str, set[str]]]] = {}
+        for event in events:
+            if event.get('type') != 'index_change':
+                continue
+            machine = str(event.get('machine', '') or '').strip()
+            table = str(event.get('table', '') or '').strip()
+            step_val = event.get('step')
+            step = str(step_val) if step_val is not None else ''
+            cols = event.get('cols') or {}
+            params = {name for name, text in cols.items() if text}
+            machine_entry = hierarchy.setdefault(machine, {})
+            table_entry = machine_entry.setdefault(table, {})
+            step_entry = table_entry.setdefault(step, set())
+            if params:
+                step_entry.update(params)
+        self._index_filter_hierarchy = hierarchy
 
+        machines = [key for key in hierarchy.keys() if key]
         self._set_combo_items(self.idx_f_machine, machines)
+        self._update_index_table_options()
+
+    def _update_index_table_options(self) -> None:
+        hierarchy = getattr(self, '_index_filter_hierarchy', {}) or {}
+        machine = self.idx_f_machine.currentText().strip() if self.idx_f_machine.count() else ""
+        tables: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            tables.update(key for key in hierarchy.get(machine, {}).keys() if key)
+        else:
+            for machine_tables in hierarchy.values():
+                tables.update(key for key in machine_tables.keys() if key)
         self._set_combo_items(self.idx_f_table, tables)
-        self._set_combo_items(self.idx_f_step, {str(s) for s in steps})
-        self._set_combo_items(self.idx_f_param, params, sort_items=False)
+        self._update_index_step_options()
+
+    def _update_index_step_options(self) -> None:
+        hierarchy = getattr(self, '_index_filter_hierarchy', {}) or {}
+        machine = self.idx_f_machine.currentText().strip() if self.idx_f_machine.count() else ""
+        table = self.idx_f_table.currentText().strip() if self.idx_f_table.count() else ""
+        steps: set[str] = set()
+        if machine and machine != "(Wszystkie)":
+            machine_tables = hierarchy.get(machine, {})
+            if table and table != "(Wszystkie)":
+                steps.update(step for step in machine_tables.get(table, {}).keys() if step)
+            else:
+                for table_steps in machine_tables.values():
+                    steps.update(step for step in table_steps.keys() if step)
+        else:
+            if table and table != "(Wszystkie)":
+                for machine_tables in hierarchy.values():
+                    steps.update(step for step in machine_tables.get(table, {}).keys() if step)
+            else:
+                for machine_tables in hierarchy.values():
+                    for table_steps in machine_tables.values():
+                        steps.update(step for step in table_steps.keys() if step)
+        self._set_combo_items(self.idx_f_step, steps)
+        self._update_index_param_options()
+
+    def _update_index_param_options(self) -> None:
+        hierarchy = getattr(self, '_index_filter_hierarchy', {}) or {}
+        machine = self.idx_f_machine.currentText().strip() if self.idx_f_machine.count() else ""
+        table = self.idx_f_table.currentText().strip() if self.idx_f_table.count() else ""
+        step = self.idx_f_step.currentText().strip() if self.idx_f_step.count() else ""
+        params: set[str] = set()
+
+        def collect(table_map: dict[str, set[str]]) -> None:
+            for step_key, values in table_map.items():
+                if step and step != "(Wszystkie)" and step_key != step:
+                    continue
+                params.update(values)
+
+        if machine and machine != "(Wszystkie)":
+            machine_tables = hierarchy.get(machine, {})
+            if table and table != "(Wszystkie)":
+                collect(machine_tables.get(table, {}))
+            else:
+                for table_steps in machine_tables.values():
+                    collect(table_steps)
+        else:
+            if table and table != "(Wszystkie)":
+                for machine_tables in hierarchy.values():
+                    collect(machine_tables.get(table, {}))
+            else:
+                for machine_tables in hierarchy.values():
+                    for table_steps in machine_tables.values():
+                        collect(table_steps)
+
+        ordered = [name for name in INDEX_PARAM_DISPLAY_ORDER if name in params]
+        self._set_combo_items(self.idx_f_param, ordered, sort_items=False)
+
+    def _on_index_machine_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_index_table_options()
+        self._apply_index_filters()
+
+    def _on_index_table_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_index_step_options()
+        self._apply_index_filters()
+
+    def _on_index_step_changed(self, index: int) -> None:  # noqa: ARG002
+        self._update_index_param_options()
+        self._apply_index_filters()
 
     def _apply_index_filters(self):
         if not hasattr(self, 'index_events'):
@@ -4626,20 +5544,111 @@ class ModernMainWindow(QMainWindow):
         except Exception:
             return str(value)
 
+    @staticmethod
+    def _normalize_struct_scalar(value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        candidate = text.replace(",", ".")
+        try:
+            dec = Decimal(candidate)
+        except (InvalidOperation, ValueError):
+            return text.lower()
+        normalized = dec.normalize()
+        formatted = format(normalized, "f")
+        if "." in formatted:
+            formatted = formatted.rstrip("0").rstrip(".")
+        return formatted or "0"
+
+    @staticmethod
+    def _format_struct_value(value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return "(brak)"
+        candidate = text.replace(",", ".")
+        try:
+            dec = Decimal(candidate)
+        except (InvalidOperation, ValueError):
+            return text
+        normalized = dec.normalize()
+        formatted = format(normalized, "f")
+        if "." in formatted:
+            formatted = formatted.rstrip("0").rstrip(".")
+        return formatted or "0"
+
+    def _build_struct_change_events(self, snaps: list[GripSnapshot | HairpinSnapshot]) -> list[dict]:
+        events: list[dict] = []
+        last_state: dict[tuple[str, str], GripSnapshot | HairpinSnapshot] = {}
+        baseline_done: set[tuple[str, str]] = set()
+        for snap in snaps:
+            if not isinstance(snap, (GripSnapshot, HairpinSnapshot)):
+                continue
+            key = (snap.machine, snap.pin)
+            if key not in baseline_done:
+                baseline_done.add(key)
+                last_state[key] = snap
+                continue
+            prev = last_state.get(key)
+            if prev is None:
+                last_state[key] = snap
+                continue
+            prev_program = getattr(prev, "program", "") or ""
+            curr_program = getattr(snap, "program", "") or ""
+            if prev_program != curr_program:
+                last_state[key] = snap
+                continue
+            prev_values = getattr(prev, "values", {}) or {}
+            curr_values = getattr(snap, "values", {}) or {}
+            changed: dict[str, str] = {}
+            for name in sorted(set(prev_values.keys()) | set(curr_values.keys()), key=_natural_sort_key):
+                prev_raw = prev_values.get(name, "")
+                curr_raw = curr_values.get(name, "")
+                prev_norm = self._normalize_struct_scalar(prev_raw)
+                curr_norm = self._normalize_struct_scalar(curr_raw)
+                if prev_norm == curr_norm:
+                    continue
+                prev_txt = self._format_struct_value(prev_raw)
+                curr_txt = self._format_struct_value(curr_raw)
+                if prev_txt == curr_txt:
+                    continue
+                changed[name] = f"{prev_txt} -> {curr_txt}"
+            if changed:
+                events.append(
+                    {
+                        'dt': snap.dt,
+                        'machine': snap.machine,
+                        'program': snap.program,
+                        'pin': snap.pin,
+                        'values': changed,
+                        'path': snap.path,
+                    }
+                )
+            last_state[key] = snap
+        events.sort(key=lambda e: (e.get('dt'), e.get('machine'), e.get('pin')))
+        return events
+
     def _build_index_events(self, snaps: list[IndexSnapshot], threshold_pct: float) -> list[dict]:
         events: list[dict] = []
         last_state: dict[tuple[str, str, int], IndexSnapshot] = {}
+        last_prog: dict[tuple[str, str, int], str] = {}
         baseline_done: set[tuple[str, str, int]] = set()
         for s in snaps:
             key = (s.machine, s.table, s.step)
             if key not in baseline_done:
                 baseline_done.add(key)
                 last_state[key] = s
+                last_prog[key] = s.program
                 continue
 
             prev = last_state.get(key)
             if prev is None:
                 last_state[key] = s
+                last_prog[key] = s.program
+                continue
+
+            if last_prog.get(key) != s.program:
+                last_state[key] = s
+                last_prog[key] = s.program
                 continue
 
             changed_cols: dict[str, str] = {}
@@ -4713,16 +5722,33 @@ class ModernMainWindow(QMainWindow):
                     'type': 'index_change',
                 })
 
+            last_state[key] = s
+            last_prog[key] = s.program
+
         events.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
-        return self._deduplicate_index_events(events)
+        deduped = self._deduplicate_index_events(events)
+        return self._collapse_repeated_index_events(deduped)
 
     @staticmethod
     def _normalize_event_text(value: object) -> str:
         if value is None:
             return ""
         if isinstance(value, str):
-            return value.strip()
-        return str(value).strip()
+            text = value.strip()
+        else:
+            text = str(value).strip()
+        if not text:
+            return ""
+        candidate = text.replace(",", ".")
+        try:
+            dec = Decimal(candidate)
+        except (InvalidOperation, ValueError):
+            return text.lower()
+        normalized = dec.normalize()
+        formatted = format(normalized, "f")
+        if "." in formatted:
+            formatted = formatted.rstrip("0").rstrip(".")
+        return formatted or "0"
 
     @staticmethod
     def _event_dt_key(value: object):
@@ -4774,6 +5800,8 @@ class ModernMainWindow(QMainWindow):
         seen: dict[tuple, dict] = {}
         deduped: list[dict] = []
         order = tuple(INDEX_PARAM_DISPLAY_ORDER)
+        merged = 0
+        logger = logging.getLogger(__name__)
         for event in events:
             if event.get('type') != 'index_change':
                 deduped.append(event)
@@ -4789,11 +5817,72 @@ class ModernMainWindow(QMainWindow):
             )
             existing = seen.get(key)
             if existing is not None:
+                merged += 1
+                logger.debug(
+                    "[IndexEvents] merged duplicate (dt=%s machine=%s table=%s step=%s) paths: %s | %s",
+                    event.get('dt'),
+                    event.get('machine'),
+                    event.get('table'),
+                    event.get('step'),
+                    existing.get('path'),
+                    event.get('path'),
+                )
                 self._merge_event_paths(existing, event)
                 continue
             seen[key] = event
             deduped.append(event)
+        if merged:
+            logger.info("[IndexEvents] merged %s strict duplicate entries", merged)
         return deduped
+
+    def _collapse_repeated_index_events(self, events: list[dict]) -> list[dict]:
+        order = tuple(INDEX_PARAM_DISPLAY_ORDER)
+        collapsed: list[dict] = []
+        last_signature: dict[tuple[str, str, str, str], tuple[tuple, object, dict]] = {}
+        logger = logging.getLogger(__name__)
+        repeats = 0
+        for event in events:
+            if event.get('type') != 'index_change':
+                collapsed.append(event)
+                continue
+
+            cols = event.get('cols') or {}
+            machine = self._normalize_event_text(event.get('machine'))
+            program = self._normalize_event_text(event.get('program'))
+            table = self._normalize_event_text(event.get('table'))
+            step = self._normalize_event_text(event.get('step'))
+            signature = tuple((name, self._normalize_event_text(cols.get(name, ""))) for name in order)
+            key = (machine, program, table, step)
+
+            previous = last_signature.get(key)
+            if previous and previous[0] == signature:
+                repeats += 1
+                prev_dt = previous[1]
+                prev_event = previous[2]
+                logger.info(
+                    "[IndexEvents] dropping repeated change for %s/%s table=%s step=%s (%s -> %s)",
+                    event.get('machine'),
+                    event.get('program'),
+                    event.get('table'),
+                    event.get('step'),
+                    prev_dt,
+                    event.get('dt'),
+                )
+                logger.debug(
+                    "[IndexEvents] repeat details: prev_path=%s new_path=%s diffs=%s",
+                    prev_event.get('path'),
+                    event.get('path'),
+                    {name: cols.get(name, "") for name in order if cols.get(name, "")},
+                )
+                self._merge_event_paths(prev_event, event)
+                continue
+
+            last_signature[key] = (signature, event.get('dt'), event)
+            collapsed.append(event)
+
+        if repeats:
+            logger.info("[IndexEvents] collapsed %s repeated index events", repeats)
+        return collapsed
 
     def _fill_change_trees(self):
         try:

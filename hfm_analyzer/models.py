@@ -48,4 +48,34 @@ class IndexSnapshot:
     path: str
 
 
-__all__ = ["FoundFile", "ParamSnapshot", "IndexSnapshot"]
+@dataclass(slots=True)
+class GripSnapshot:
+    """Snapshot describing HP grip configuration for a specific pin."""
+
+    dt: datetime
+    machine: str
+    program: str
+    pin: str
+    values: Dict[str, str]
+    path: str
+
+
+@dataclass(slots=True)
+class HairpinSnapshot:
+    """Snapshot describing hairpin manager configuration for a specific pin."""
+
+    dt: datetime
+    machine: str
+    program: str
+    pin: str
+    values: Dict[str, str]
+    path: str
+
+
+__all__ = [
+    "FoundFile",
+    "ParamSnapshot",
+    "IndexSnapshot",
+    "GripSnapshot",
+    "HairpinSnapshot",
+]
