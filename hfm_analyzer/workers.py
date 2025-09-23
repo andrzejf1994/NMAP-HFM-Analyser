@@ -6,6 +6,7 @@ import glob
 import logging
 import os
 import re
+from decimal import Decimal, InvalidOperation
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -15,7 +16,7 @@ import xml.etree.ElementTree as ET
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from .constants import INDEX_PARAM_NAMES, PARAM_NAMES
-from .models import FoundFile, IndexSnapshot, ParamSnapshot
+from .models import FoundFile, GripSnapshot, HairpinSnapshot, IndexSnapshot, ParamSnapshot
 
 try:  # Optional acceleration when lxml is available.
     import lxml.etree as LET  # type: ignore
@@ -108,6 +109,8 @@ class AnalyzeWorker(QThread):
         try:
             param_results: list[ParamSnapshot] = []
             index_results: list[IndexSnapshot] = []
+            grip_results: list[GripSnapshot] = []
+            hairpin_results: list[HairpinSnapshot] = []
             total = len(self.files)
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {executor.submit(self._analyze_file, file): file for file in self.files}
@@ -119,22 +122,42 @@ class AnalyzeWorker(QThread):
                         f"Analizuję plik {done}/{total}: {os.path.basename(found_file.path)}"
                     )
                     try:
-                        param_recs, index_recs = future.result()
+                        param_recs, index_recs, grip_recs, hairpin_recs = future.result()
                         if param_recs:
                             param_results.extend(param_recs)
                         if index_recs:
                             index_results.extend(index_recs)
+                        if grip_recs:
+                            grip_results.extend(grip_recs)
+                        if hairpin_recs:
+                            hairpin_results.extend(hairpin_recs)
                     except Exception:
                         logging.getLogger(__name__).exception("[AnalyzeWorker] błąd podczas analizy pliku")
                         continue
-            self.finished.emit({'params': param_results, 'index': index_results})
+            self.finished.emit(
+                {
+                    'params': param_results,
+                    'index': index_results,
+                    'hp_grip': grip_results,
+                    'hairpin': hairpin_results,
+                }
+            )
         except Exception as exc:  # pragma: no cover - defensive programming
             self.error.emit(str(exc))
 
     # The parsing logic is intentionally kept private because it is always executed in worker threads.
-    def _analyze_file(self, found_file: FoundFile) -> Tuple[list[ParamSnapshot], list[IndexSnapshot]]:
+    def _analyze_file(
+        self, found_file: FoundFile
+    ) -> Tuple[
+        list[ParamSnapshot],
+        list[IndexSnapshot],
+        list[GripSnapshot],
+        list[HairpinSnapshot],
+    ]:
         param_records: list[ParamSnapshot] = []
         index_records: list[IndexSnapshot] = []
+        grip_records: list[GripSnapshot] = []
+        hairpin_records: list[HairpinSnapshot] = []
         if LET is not None:
             parser = LET.XMLParser(huge_tree=True, recover=True)  # type: ignore[arg-type]
             root = LET.parse(found_file.path, parser=parser).getroot()  # type: ignore[call-arg]
@@ -197,6 +220,9 @@ class AnalyzeWorker(QThread):
         a_hair = None
         a_kin = None
         a_index = None
+        grip_struct = None
+        hairpin_struct = None
+
         for array in iter_items("Array"):
             name = array.get("name")
             if name == "aHairPinType" and a_hair is None:
@@ -207,6 +233,20 @@ class AnalyzeWorker(QThread):
                 a_index = array
             if a_hair is not None and a_kin is not None and a_index is not None:
                 break
+
+        if LET is not None:
+            struct_iter = root.iterfind  # type: ignore[attr-defined]
+        else:
+            struct_iter = root.iterfind
+
+        try:
+            grip_struct = next((s for s in struct_iter(".//Struct[@name='sHPGripData']")), None)
+        except Exception:
+            grip_struct = None
+        try:
+            hairpin_struct = next((s for s in struct_iter(".//Struct[@name='sHairpinManagerData']")), None)
+        except Exception:
+            hairpin_struct = None
 
         if a_hair is not None:
             for struct in a_hair.iter("Struct"):
@@ -395,7 +435,142 @@ class AnalyzeWorker(QThread):
                         )
                     )
 
-        return param_records, index_records
+        def _struct_pin_name(
+            struct: ET.Element,
+            *,
+            fallback_map: dict[str, str] | None = None,
+        ) -> str:
+            def _is_numeric(text: str) -> bool:
+                cleaned = text.replace(",", ".")
+                try:
+                    Decimal(cleaned)
+                except (InvalidOperation, ValueError):
+                    return False
+                return True
+
+            candidates: list[str] = []
+            for item in struct.findall("Item"):
+                name = (item.get("name") or "").lower()
+                value = (item.get("value") or "").strip()
+                if not value:
+                    continue
+                numeric_value = _is_numeric(value)
+                if any(key in name for key in ("descr", "name", "opis", "label")) and not numeric_value:
+                    return value
+                if not numeric_value:
+                    candidates.append(value)
+            if fallback_map:
+                idx = (struct.get("idx") or "").strip()
+                if idx and idx in fallback_map:
+                    mapped = (fallback_map[idx] or "").strip()
+                    if mapped and not _is_numeric(mapped):
+                        return mapped
+                name_attr = (struct.get("name") or "").strip()
+                if name_attr and name_attr in fallback_map:
+                    mapped = (fallback_map[name_attr] or "").strip()
+                    if mapped and not _is_numeric(mapped):
+                        return mapped
+            label = (struct.get("name") or "").strip()
+            if label and not _is_numeric(label):
+                return label
+            idx = (struct.get("idx") or "").strip()
+            if idx:
+                if fallback_map and idx in fallback_map:
+                    mapped = (fallback_map[idx] or "").strip()
+                    if mapped and not _is_numeric(mapped):
+                        return mapped
+                return f"Pin {idx}"
+            if fallback_map:
+                for key in ("", "0"):
+                    if key in fallback_map:
+                        mapped = (fallback_map[key] or "").strip()
+                        if mapped and not _is_numeric(mapped):
+                            return mapped
+            return candidates[0] if candidates else "Pin"
+
+        def _append_value(mapping: dict[str, str], key: str, value: str) -> None:
+            base = key.strip() or "Value"
+            candidate = base
+            suffix = 2
+            while candidate in mapping:
+                candidate = f"{base}_{suffix}"
+                suffix += 1
+            mapping[candidate] = value
+
+        def _struct_values(struct: ET.Element, prefix: str = "") -> dict[str, str]:
+            values: dict[str, str] = {}
+
+            def _qualified(key: str) -> str:
+                return f"{prefix}/{key}" if prefix else key
+
+            for item in struct.findall("Item"):
+                name = item.get("name") or ""
+                value = (item.get("value") or "").strip()
+                key = name if name else f"Item{len(values) + 1}"
+                _append_value(values, _qualified(key), value)
+
+            for array in struct.findall("Array"):
+                arr_name = array.get("name") or "Array"
+                try:
+                    start_idx = int(array.get("startidx") or array.get("startIndex") or 0)
+                except Exception:
+                    start_idx = 0
+                for offset, item in enumerate(array.findall("Item")):
+                    raw_name = item.get("name") or ""
+                    value = (item.get("value") or "").strip()
+                    if raw_name:
+                        key = f"{arr_name}/{raw_name}"
+                    else:
+                        key = f"{arr_name}[{start_idx + offset}]"
+                    _append_value(values, _qualified(key), value)
+                for sub_struct in array.findall("Struct"):
+                    sub_name = sub_struct.get("name") or sub_struct.get("idx") or "Struct"
+                    nested = _struct_values(sub_struct, prefix=f"{arr_name}/{sub_name}")
+                    for nested_key, nested_val in nested.items():
+                        _append_value(values, _qualified(nested_key), nested_val)
+
+            for sub_struct in struct.findall("Struct"):
+                sub_name = sub_struct.get("name") or sub_struct.get("idx") or "Struct"
+                nested = _struct_values(sub_struct, prefix=sub_name)
+                for nested_key, nested_val in nested.items():
+                    _append_value(values, _qualified(nested_key), nested_val)
+
+            return values
+
+        def _parse_struct_array(
+            parent: ET.Element | None,
+            array_name: str,
+            collector: list[GripSnapshot] | list[HairpinSnapshot],
+            snapshot_factory,
+            pin_lookup: dict[str, str] | None = None,
+        ) -> None:
+            if parent is None:
+                return
+            target_array = None
+            for array in parent.findall("Array"):
+                if array.get("name") == array_name:
+                    target_array = array
+                    break
+            if target_array is None:
+                return
+            for struct in target_array.findall("Struct"):
+                pin = _struct_pin_name(struct, fallback_map=pin_lookup)
+                values = _struct_values(struct)
+                collector.append(
+                    snapshot_factory(
+                        dt=found_file.dt,
+                        machine=found_file.machine,
+                        program=program,
+                        pin=pin,
+                        values=values,
+                        path=found_file.path,
+                    )
+                )
+
+        _parse_struct_array(grip_struct, "aHPGripTypes", grip_records, GripSnapshot, pin_map)
+        _parse_struct_array(hairpin_struct, "aHairPinType", hairpin_records, HairpinSnapshot, pin_map)
+
+        return param_records, index_records, grip_records, hairpin_records
 
 
 class IntranetWorker(QThread):
