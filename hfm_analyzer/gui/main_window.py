@@ -31,10 +31,20 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
 )
 
-from ..constants import INDEX_PARAM_DISPLAY_ORDER, PARAM_DISPLAY_ORDER, SUMMARY_PALETTE
-from ..models import FoundFile, GripSnapshot, HairpinSnapshot, IndexSnapshot, ParamSnapshot
-from .handlers import MainWindowHandlers
-from .tabs import (
+from hfm_analyzer.constants import (
+    INDEX_PARAM_DISPLAY_ORDER,
+    PARAM_DISPLAY_ORDER,
+    SUMMARY_PALETTE,
+)
+from hfm_analyzer.models import (
+    FoundFile,
+    GripSnapshot,
+    HairpinSnapshot,
+    IndexSnapshot,
+    ParamSnapshot,
+)
+from hfm_analyzer.gui.handlers import MainWindowHandlers
+from hfm_analyzer.gui.tabs import (
     ChangesTab,
     ChangesChartTab,
     ParameterChangesTab,
@@ -42,7 +52,7 @@ from .tabs import (
     StrippingTab,
     InsertionTab,
 )
-from .widgets import LineChartWidget, ParetoChartWidget
+from hfm_analyzer.gui.widgets import LineChartWidget, ParetoChartWidget
 
 class ModernMainWindow(MainWindowHandlers, QMainWindow):
     def __init__(self, settings: QSettings):

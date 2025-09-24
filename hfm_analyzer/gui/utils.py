@@ -8,7 +8,7 @@ import string
 
 from PyQt5.QtWidgets import QInputDialog, QMessageBox, QWidget
 
-from ..utils import (
+from hfm_analyzer.utils import (
     extract_unc_share,
     list_mapped_network_drives,
     map_network_drive,

@@ -39,7 +39,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..constants import (
+from hfm_analyzer.constants import (
     APP_NAME,
     APP_ORG,
     DEFAULT_INTRANET_EXCLUDES,
@@ -51,24 +51,35 @@ from ..constants import (
     PARAM_DISPLAY_ORDER,
     SUMMARY_PALETTE,
 )
-from ..models import FoundFile, GripSnapshot, HairpinSnapshot, IndexSnapshot, ParamSnapshot
-from ..utils import (
+from hfm_analyzer.models import (
+    FoundFile,
+    GripSnapshot,
+    HairpinSnapshot,
+    IndexSnapshot,
+    ParamSnapshot,
+)
+from hfm_analyzer.utils import (
     extract_unc_share,
     list_mapped_network_drives,
     map_network_drive,
     map_unc_to_drive_if_possible,
     network_path_available,
 )
-from ..workers import AnalyzeWorker, IntranetWorker, ScanWorker, STEP_SPEED_LABEL
-from .dialogs import NetworkCheckDialog, SettingsDialog
-from .utils import (
+from hfm_analyzer.workers import (
+    AnalyzeWorker,
+    IntranetWorker,
+    ScanWorker,
+    STEP_SPEED_LABEL,
+)
+from hfm_analyzer.gui.dialogs import NetworkCheckDialog, SettingsDialog
+from hfm_analyzer.gui.utils import (
     HAIRPIN_PARAM_EXCLUDE,
     HAIRPIN_PARAM_LABELS,
     TRACKED_MACHINE_CODES,
     _natural_sort_key,
     _maybe_offer_drive_mapping,
 )
-from .widgets import CountBadgeDelegate
+from hfm_analyzer.gui.widgets import CountBadgeDelegate
 
 class MainWindowHandlers:
     def closeEvent(self, e):

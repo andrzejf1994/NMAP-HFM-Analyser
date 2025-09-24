@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from ..main_window import ModernMainWindow
+    from hfm_analyzer.gui.main_window import ModernMainWindow
 
 
 class ProgramChangesTab(QWidget):

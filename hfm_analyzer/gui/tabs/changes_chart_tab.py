@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING
 
 from PyQt5.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from ..widgets import BarChartWidget
+from hfm_analyzer.gui.widgets import BarChartWidget
 
 if TYPE_CHECKING:
-    from ..main_window import ModernMainWindow
+    from hfm_analyzer.gui.main_window import ModernMainWindow
 
 
 class ChangesChartTab(QWidget):

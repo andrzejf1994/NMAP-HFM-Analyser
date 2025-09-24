@@ -24,10 +24,10 @@ except Exception:  # pragma: no cover - optional dependency
     QWebEngineView = None  # type: ignore
     QWebEnginePage = None  # type: ignore
 
-from ..widgets import BarChartWidget, PieChartWidget
+from hfm_analyzer.gui.widgets import BarChartWidget, PieChartWidget
 
 if TYPE_CHECKING:
-    from ..main_window import ModernMainWindow
+    from hfm_analyzer.gui.main_window import ModernMainWindow
 
 
 class ChangesTab(QWidget):

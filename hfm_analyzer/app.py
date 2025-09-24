@@ -11,9 +11,9 @@ from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QColor, QPalette, QIcon
 from PyQt5.QtWidgets import QApplication
 
-from .constants import APP_NAME, APP_ORG, DEFAULT_PATH_H66_2
-from .gui import ModernMainWindow, NetworkCheckDialog
-from .utils import network_path_available
+from hfm_analyzer.constants import APP_NAME, APP_ORG, DEFAULT_PATH_H66_2
+from hfm_analyzer.gui import ModernMainWindow, NetworkCheckDialog
+from hfm_analyzer.utils import network_path_available
 
 
 def ensure_base_path(settings: QSettings) -> bool:

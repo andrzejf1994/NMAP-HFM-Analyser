@@ -15,8 +15,14 @@ import xml.etree.ElementTree as ET
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from .constants import INDEX_PARAM_NAMES, PARAM_NAMES
-from .models import FoundFile, GripSnapshot, HairpinSnapshot, IndexSnapshot, ParamSnapshot
+from hfm_analyzer.constants import INDEX_PARAM_NAMES, PARAM_NAMES
+from hfm_analyzer.models import (
+    FoundFile,
+    GripSnapshot,
+    HairpinSnapshot,
+    IndexSnapshot,
+    ParamSnapshot,
+)
 
 try:  # Optional acceleration when lxml is available.
     import lxml.etree as LET  # type: ignore

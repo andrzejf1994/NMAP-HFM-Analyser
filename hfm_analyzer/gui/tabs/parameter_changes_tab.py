@@ -16,10 +16,10 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..constants import PARAM_DISPLAY_ORDER
+from hfm_analyzer.constants import PARAM_DISPLAY_ORDER
 
 if TYPE_CHECKING:
-    from ..main_window import ModernMainWindow
+    from hfm_analyzer.gui.main_window import ModernMainWindow
 
 
 class ParameterChangesTab(QWidget):
