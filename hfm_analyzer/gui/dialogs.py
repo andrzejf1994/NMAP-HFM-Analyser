@@ -18,9 +18,13 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..constants import DEFAULT_INTRANET_EXCLUDES, DEFAULT_PATH_EVO, DEFAULT_PATH_H66_2
-from ..utils import network_path_available
-from .utils import _maybe_offer_drive_mapping
+from hfm_analyzer.constants import (
+    DEFAULT_INTRANET_EXCLUDES,
+    DEFAULT_PATH_EVO,
+    DEFAULT_PATH_H66_2,
+)
+from hfm_analyzer.utils import network_path_available
+from hfm_analyzer.gui.utils import _maybe_offer_drive_mapping
 
 class SettingsDialog(QDialog):
     """Application preferences dialog."""

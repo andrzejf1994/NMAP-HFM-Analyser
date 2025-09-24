@@ -12,8 +12,8 @@ from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt5.QtWidgets import QStyledItemDelegate, QWidget
 
-from ..constants import SUMMARY_PALETTE
-from .utils import _natural_sort_key
+from hfm_analyzer.constants import SUMMARY_PALETTE
+from hfm_analyzer.gui.utils import _natural_sort_key
 
 class PieChartWidget(QWidget):
     """Minimal pie chart widget used when WebEngine is unavailable."""

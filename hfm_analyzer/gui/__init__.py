@@ -1,8 +1,8 @@
 """GUI package exposing the main window and related components."""
 
-from .dialogs import NetworkCheckDialog, SettingsDialog
-from .main_window import ModernMainWindow
-from .widgets import BarChartWidget, CountBadgeDelegate, PieChartWidget
+from hfm_analyzer.gui.dialogs import NetworkCheckDialog, SettingsDialog
+from hfm_analyzer.gui.main_window import ModernMainWindow
+from hfm_analyzer.gui.widgets import BarChartWidget, CountBadgeDelegate, PieChartWidget
 
 __all__ = [
     "PieChartWidget",
