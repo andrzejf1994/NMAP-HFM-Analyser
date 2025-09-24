@@ -3700,6 +3700,7 @@ class MainWindowHandlers:
             deduped = self._deduplicate_index_events(events)
             return self._collapse_repeated_index_events(deduped)
 
+    @staticmethod
     def _normalize_event_text(value: object) -> str:
             if value is None:
                 return ""
@@ -3720,6 +3721,7 @@ class MainWindowHandlers:
                 formatted = formatted.rstrip("0").rstrip(".")
             return formatted or "0"
 
+    @staticmethod
     def _event_dt_key(value: object):
             if isinstance(value, datetime):
                 return value.replace(microsecond=0)

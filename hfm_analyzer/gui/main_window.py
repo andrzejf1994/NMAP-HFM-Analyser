@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PyQt5.QtCore import QDateTime, QSettings, QTime, Qt, QSize
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
@@ -53,6 +55,15 @@ from hfm_analyzer.gui.tabs import (
     InsertionTab,
 )
 from hfm_analyzer.gui.widgets import LineChartWidget, ParetoChartWidget
+
+
+def _label(text: str) -> QLabel:
+    """Create a consistently styled label used across filter toolbars."""
+
+    widget = QLabel(text)
+    widget.setStyleSheet("color:#2c3e50;font-weight:600;")
+    return widget
+
 
 class ModernMainWindow(MainWindowHandlers, QMainWindow):
     def __init__(self, settings: QSettings):
