@@ -38,6 +38,11 @@ from hfm_analyzer.constants import (
     PARAM_DISPLAY_ORDER,
     SUMMARY_PALETTE,
 )
+from hfm_analyzer.data_labels import (
+    GRIP_PARAM_ORDER,
+    HAIRPIN_PARAM_ORDER,
+    NEST_PARAM_ORDER,
+)
 from hfm_analyzer.models import (
     FoundFile,
     GripSnapshot,
@@ -52,7 +57,8 @@ from hfm_analyzer.gui.tabs import (
     ParameterChangesTab,
     ProgramChangesTab,
     StrippingTab,
-    InsertionTab,
+    GripperTab,
+    NestTab,
 )
 from hfm_analyzer.gui.widgets import LineChartWidget, ParetoChartWidget
 
@@ -396,20 +402,15 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         self.param_card_info.setWordWrap(True)
         card_layout.addWidget(self.param_card_info)
     
-        param_headers = [
-            "Program",
-            "Tabela",
-            "Pin",
-            "Step",
-            "Angle",
-            "Nose Locking",
-            "Nose Translation",
-            "Rotation",
-            "Step Speed",
-            "Wire Feeding",
-            "X",
-            "Y",
-        ]
+        value_columns = (
+            list(PARAM_DISPLAY_ORDER)
+            + list(INDEX_PARAM_DISPLAY_ORDER)
+            + list(GRIP_PARAM_ORDER)
+            + list(NEST_PARAM_ORDER)
+            + list(HAIRPIN_PARAM_ORDER)
+        )
+        self.param_card_value_names = value_columns
+        param_headers = ["Program", "Tabela", "Pin", "Step"] + value_columns
         self.param_card_table = QTableWidget(0, len(param_headers))
         self.param_card_table.setHorizontalHeaderLabels(param_headers)
         self.param_card_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -432,8 +433,11 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         self.tabs.addTab(self.param_card_tab, "Karta parametrów")
     
     
-        self.insertion_tab_widget = InsertionTab(self)
-        self.tabs.addTab(self.insertion_tab_widget, "Wkładanie")
+        self.gripper_tab_widget = GripperTab(self)
+        self.tabs.addTab(self.gripper_tab_widget, "Gripper")
+
+        self.nest_tab_widget = NestTab(self)
+        self.tabs.addTab(self.nest_tab_widget, "Nest")
     
     
     

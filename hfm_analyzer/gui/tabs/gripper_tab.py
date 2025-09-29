@@ -1,4 +1,4 @@
-"""User interface for the "Wkładanie" tab."""
+"""User interface for the "Gripper" tab."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from hfm_analyzer.gui.main_window import ModernMainWindow
 
 
-class InsertionTab(QWidget):
-    """Displays hairpin insertion statistics and filters."""
+class GripperTab(QWidget):
+    """Displays gripper statistics and filters."""
 
     def __init__(self, window: ModernMainWindow) -> None:
         super().__init__()
@@ -55,4 +55,4 @@ class InsertionTab(QWidget):
         layout.addWidget(window.hp_grip_table, 1)
 
 
-__all__ = ["InsertionTab"]
+__all__ = ["GripperTab"]
