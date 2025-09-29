@@ -61,6 +61,18 @@ class GripSnapshot:
 
 
 @dataclass(slots=True)
+class NestSnapshot:
+    """Snapshot describing nest configuration for a specific pin."""
+
+    dt: datetime
+    machine: str
+    program: str
+    pin: str
+    values: Dict[str, str]
+    path: str
+
+
+@dataclass(slots=True)
 class HairpinSnapshot:
     """Snapshot describing hairpin manager configuration for a specific pin."""
 
@@ -77,5 +89,6 @@ __all__ = [
     "ParamSnapshot",
     "IndexSnapshot",
     "GripSnapshot",
+    "NestSnapshot",
     "HairpinSnapshot",
 ]

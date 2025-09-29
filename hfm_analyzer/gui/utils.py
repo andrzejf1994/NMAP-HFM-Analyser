@@ -8,6 +8,16 @@ import string
 
 from PyQt5.QtWidgets import QInputDialog, QMessageBox, QWidget
 
+from hfm_analyzer.data_labels import (
+    GRIP_PARAM_FIELDS,
+    GRIP_PARAM_ORDER,
+    HAIRPIN_PARAM_FIELDS,
+    HAIRPIN_PARAM_LABELS,
+    HAIRPIN_PARAM_ORDER,
+    NEST_PARAM_FIELDS,
+    NEST_PARAM_ORDER,
+)
+
 from hfm_analyzer.utils import (
     extract_unc_share,
     list_mapped_network_drives,
@@ -18,16 +28,6 @@ from hfm_analyzer.utils import (
 
 TRACKED_MACHINE_CODES: set[str] = {f"M{i}" for i in range(1, 7)} | {f"S{i}" for i in range(1, 7)}
 
-
-HAIRPIN_PARAM_LABELS: dict[str, str] = {
-    "r64GambaIniz": "DŁUGOŚĆ NÓŻKI POCZĄTKOWEJ",
-    "r64GambaFinale": "DŁUGOŚĆ NÓŻKI KOŃCOWEJ",
-    "r64LunghezzaStripIniziale": "OBSZAR ODIZOLOWANIA (POCZĄTEK)",
-    "r64LunghezzaStripFinale": "OBSZAR ODIZOLOWANIA (KONIEC)",
-    "r64OffsetStripIniziale": "POCZĄTEK ODIZOLOWANIA",
-    "r64OffsetStripFinale": "KONIEC ODIZOLOWANIA",
-    "r64LunghezzaHairpin": "DŁUGOŚĆ PINA",
-}
 
 HAIRPIN_PARAM_EXCLUDE: set[str] = {
     "r64LunghezzaStripTaglioIniziale",
@@ -159,7 +159,13 @@ def _natural_sort_key(value: str) -> tuple:
 
 __all__ = [
     "TRACKED_MACHINE_CODES",
+    "GRIP_PARAM_FIELDS",
+    "GRIP_PARAM_ORDER",
+    "NEST_PARAM_FIELDS",
+    "NEST_PARAM_ORDER",
+    "HAIRPIN_PARAM_FIELDS",
     "HAIRPIN_PARAM_LABELS",
+    "HAIRPIN_PARAM_ORDER",
     "HAIRPIN_PARAM_EXCLUDE",
     "_available_drive_letters",
     "_maybe_offer_drive_mapping",

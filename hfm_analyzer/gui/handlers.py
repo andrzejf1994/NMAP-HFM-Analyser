@@ -56,6 +56,7 @@ from hfm_analyzer.models import (
     GripSnapshot,
     HairpinSnapshot,
     IndexSnapshot,
+    NestSnapshot,
     ParamSnapshot,
 )
 from hfm_analyzer.utils import (
@@ -73,8 +74,11 @@ from hfm_analyzer.workers import (
 )
 from hfm_analyzer.gui.dialogs import NetworkCheckDialog, SettingsDialog
 from hfm_analyzer.gui.utils import (
+    GRIP_PARAM_ORDER,
     HAIRPIN_PARAM_EXCLUDE,
     HAIRPIN_PARAM_LABELS,
+    HAIRPIN_PARAM_ORDER,
+    NEST_PARAM_ORDER,
     TRACKED_MACHINE_CODES,
     _natural_sort_key,
     _maybe_offer_drive_mapping,
@@ -1734,21 +1738,30 @@ class MainWindowHandlers:
             try:
                 self.hp_grip_snapshots = []
                 self.hp_grip_events = []
+                self.hp_grip_filtered = []
+                self._hp_grip_value_keys = []
+                self._hp_grip_filter_hierarchy = {}
+                self.nest_snapshots = []
+                self.nest_events = []
+                self.nest_filtered = []
+                self._nest_value_keys = []
+                self._nest_filter_hierarchy = {}
                 self.hairpin_snapshots = []
                 self.hairpin_events = []
-                self.hp_grip_events = []
-                self.hp_grip_filtered = []
-                self.hairpin_events = []
                 self.hairpin_filtered = []
-                self._hp_grip_value_keys = []
                 self._hairpin_value_keys = []
-                self._hp_grip_filter_hierarchy = {}
                 self._hairpin_filter_hierarchy = {}
                 self._hairpin_display_to_source = {}
                 self._configure_hp_grip_table()
+                self._configure_nest_table()
                 self._configure_stripping_table()
                 self._populate_hp_grip_filters()
+                self._populate_nest_filters()
                 self._populate_stripping_filters()
+                self._param_card_index_lookup = {}
+                self._param_card_grip_lookup = {}
+                self._param_card_nest_lookup = {}
+                self._param_card_hairpin_lookup = {}
             except Exception:
                 pass
             try:
@@ -2053,6 +2066,7 @@ class MainWindowHandlers:
                 self.param_snapshots = []
                 self.index_snapshots = []
                 self.hp_grip_snapshots = []
+                self.nest_snapshots = []
                 self.hairpin_snapshots = []
                 self.param_card_groups = {}
                 self.current_param_card_rows = []
@@ -2063,15 +2077,20 @@ class MainWindowHandlers:
                 self._clear_index_line_charts()
                 self._populate_param_card_filters()
                 self._hp_grip_value_keys = []
+                self._nest_value_keys = []
                 self._hairpin_value_keys = []
                 self._hp_grip_filter_hierarchy = {}
+                self._nest_filter_hierarchy = {}
                 self._hairpin_filter_hierarchy = {}
                 self._hairpin_display_to_source = {}
                 self.hp_grip_filtered = []
+                self.nest_filtered = []
                 self.hairpin_filtered = []
                 self._configure_hp_grip_table()
+                self._configure_nest_table()
                 self._configure_stripping_table()
                 self._populate_hp_grip_filters()
+                self._populate_nest_filters()
                 self._populate_stripping_filters()
             except Exception:
                 pass
@@ -2174,11 +2193,13 @@ class MainWindowHandlers:
                 param_records = list(records.get('params') or [])
                 index_records = list(records.get('index') or [])
                 hp_grip_records = list(records.get('hp_grip') or [])
+                nest_records = list(records.get('nest') or [])
                 hairpin_records = list(records.get('hairpin') or [])
             else:
                 param_records = list(records or [])
                 index_records = []
                 hp_grip_records = []
+                nest_records = []
                 hairpin_records = []
 
             snaps: list[ParamSnapshot] = sorted(param_records, key=lambda r: r.dt)
@@ -2195,6 +2216,14 @@ class MainWindowHandlers:
                 self.hp_grip_events = self._build_struct_change_events(grip_snaps)
                 self._refresh_hp_grip_columns()
                 self._populate_hp_grip_filters()
+            except Exception:
+                pass
+            try:
+                nest_snaps = sorted(nest_records, key=lambda r: r.dt)
+                self.nest_snapshots = nest_snaps
+                self.nest_events = self._build_struct_change_events(nest_snaps)
+                self._refresh_nest_columns()
+                self._populate_nest_filters()
             except Exception:
                 pass
             try:
@@ -2681,9 +2710,40 @@ class MainWindowHandlers:
                         text = str(key or '').strip()
                         if text:
                             keys.add(text)
-            ordered = sorted(keys, key=_natural_sort_key)
+            ordered: list[str] = []
+            for key in GRIP_PARAM_ORDER:
+                if key in keys:
+                    ordered.append(key)
+            remaining = sorted(keys.difference(ordered), key=_natural_sort_key)
+            ordered.extend(remaining)
             self._hp_grip_value_keys = ordered
             self._configure_hp_grip_table()
+
+    def _refresh_nest_columns(self) -> None:
+            keys: set[str] = set()
+            events = getattr(self, 'nest_events', [])
+            if events:
+                for event in events:
+                    for key in event.get('values', {}).keys():
+                        text = str(key or '').strip()
+                        if text:
+                            keys.add(text)
+            else:
+                for snap in getattr(self, 'nest_snapshots', []):
+                    if not isinstance(snap, NestSnapshot):
+                        continue
+                    for key in getattr(snap, 'values', {}).keys():
+                        text = str(key or '').strip()
+                        if text:
+                            keys.add(text)
+            ordered: list[str] = []
+            for key in NEST_PARAM_ORDER:
+                if key in keys:
+                    ordered.append(key)
+            remaining = sorted(keys.difference(ordered), key=_natural_sort_key)
+            ordered.extend(remaining)
+            self._nest_value_keys = ordered
+            self._configure_nest_table()
 
     def _refresh_stripping_columns(self) -> None:
             keys: set[str] = set()
@@ -2702,21 +2762,25 @@ class MainWindowHandlers:
                         text = str(key or '').strip()
                         if text:
                             keys.add(text)
-            ordered_sources = [
-                key
-                for key in sorted(keys, key=_natural_sort_key)
-                if key not in HAIRPIN_PARAM_EXCLUDE
-            ]
+            normalized: dict[str, str] = {}
+            for source in keys:
+                if source in HAIRPIN_PARAM_EXCLUDE:
+                    continue
+                display = HAIRPIN_PARAM_LABELS.get(source, source)
+                normalized.setdefault(display, source)
             display_map: dict[str, str] = {}
             ordered_display: list[str] = []
-            for source in ordered_sources:
-                display = HAIRPIN_PARAM_LABELS.get(source, source)
+            for display in HAIRPIN_PARAM_ORDER:
+                if display in normalized:
+                    display_map[display] = normalized.pop(display)
+                    ordered_display.append(display)
+            for display in sorted(normalized.keys(), key=_natural_sort_key):
+                source = normalized[display]
                 unique = display
-                if unique in display_map:
-                    suffix = 2
-                    while f"{display} ({suffix})" in display_map:
-                        suffix += 1
+                suffix = 2
+                while unique in display_map:
                     unique = f"{display} ({suffix})"
+                    suffix += 1
                 display_map[unique] = source
                 ordered_display.append(unique)
             self._hairpin_value_keys = ordered_display
@@ -2729,6 +2793,25 @@ class MainWindowHandlers:
                 return
             base_headers = ["Data", "Czas", "Maszyna", "Program", "Pin"]
             columns = base_headers + list(getattr(self, '_hp_grip_value_keys', [])) + ["Ścieżka"]
+            table.setColumnCount(len(columns))
+            table.setHorizontalHeaderLabels(columns)
+            try:
+                table.setColumnHidden(len(columns) - 1, True)
+            except Exception:
+                pass
+            try:
+                header = table.horizontalHeader()
+                for idx in range(len(columns)):
+                    header.setSectionResizeMode(idx, QHeaderView.ResizeToContents)
+            except Exception:
+                pass
+
+    def _configure_nest_table(self) -> None:
+            table = getattr(self, 'nest_table', None)
+            if table is None:
+                return
+            base_headers = ["Data", "Czas", "Maszyna", "Program", "Pin"]
+            columns = base_headers + list(getattr(self, '_nest_value_keys', [])) + ["Ścieżka"]
             table.setColumnCount(len(columns))
             table.setHorizontalHeaderLabels(columns)
             try:
@@ -2839,6 +2922,85 @@ class MainWindowHandlers:
             except Exception:
                 pass
             self.hp_grip_filtered = rows
+
+    def _populate_nest_filters(self) -> None:
+            if not hasattr(self, 'nest_machine'):
+                return
+            events = getattr(self, 'nest_events', [])
+            hierarchy: dict[str, set[str]] = {}
+            for event in events:
+                machine = str(event.get('machine', '') or '').strip()
+                pin = str(event.get('pin', '') or '').strip()
+                if not machine:
+                    continue
+                machine_set = hierarchy.setdefault(machine, set())
+                if pin:
+                    machine_set.add(pin)
+            self._nest_filter_hierarchy = hierarchy
+            machines = [key for key in hierarchy.keys() if key]
+            self._set_combo_items(self.nest_machine, machines)
+            self._update_nest_pin_options()
+            self._apply_nest_filters()
+
+    def _update_nest_pin_options(self) -> None:
+            hierarchy = getattr(self, '_nest_filter_hierarchy', {}) or {}
+            machine = self.nest_machine.currentText().strip() if self.nest_machine.count() else ""
+            pins: set[str] = set()
+            if machine and machine != "(Wszystkie)":
+                pins.update(hierarchy.get(machine, set()))
+            else:
+                for values in hierarchy.values():
+                    pins.update(values)
+            self._set_combo_items(self.nest_pin, pins)
+
+    def _on_nest_machine_changed(self, index: int) -> None:  # noqa: ARG002
+            self._update_nest_pin_options()
+            self._apply_nest_filters()
+
+    def _apply_nest_filters(self) -> None:
+            table = getattr(self, 'nest_table', None)
+            if table is None:
+                return
+            events = getattr(self, 'nest_events', [])
+            machine = self.nest_machine.currentText() if self.nest_machine.count() else "(Wszystkie)"
+            pin = self.nest_pin.currentText() if self.nest_pin.count() else "(Wszystkie)"
+            rows: list[dict] = []
+            for event in events:
+                if machine and machine != "(Wszystkie)" and event.get('machine') != machine:
+                    continue
+                if pin and pin != "(Wszystkie)" and event.get('pin') != pin:
+                    continue
+                rows.append(event)
+            rows.sort(key=lambda r: (r.get('dt'), r.get('machine'), r.get('pin')))
+            table.setRowCount(len(rows))
+            value_keys = list(getattr(self, '_nest_value_keys', []))
+            highlight = QBrush(QColor('#dbeafe'))
+            for row_idx, event in enumerate(rows):
+                dt = event.get('dt')
+                table.setItem(row_idx, 0, QTableWidgetItem(dt.strftime('%Y-%m-%d') if isinstance(dt, datetime) else ''))
+                table.setItem(row_idx, 1, QTableWidgetItem(dt.strftime('%H:%M:%S') if isinstance(dt, datetime) else ''))
+                table.setItem(row_idx, 2, QTableWidgetItem(event.get('machine', '')))
+                table.setItem(row_idx, 3, QTableWidgetItem(event.get('program', '')))
+                table.setItem(row_idx, 4, QTableWidgetItem(event.get('pin', '')))
+                base = 5
+                for offset, key in enumerate(value_keys):
+                    text = str(event.get('values', {}).get(key, ''))
+                    item = QTableWidgetItem(text)
+                    if text:
+                        item.setToolTip(text)
+                        item.setBackground(highlight)
+                    table.setItem(row_idx, base + offset, item)
+                path_idx = base + len(value_keys)
+                path_txt = event.get('path', '') or ''
+                path_item = QTableWidgetItem(path_txt)
+                if path_txt:
+                    path_item.setToolTip(path_txt)
+                table.setItem(row_idx, path_idx, path_item)
+            try:
+                table.resizeColumnsToContents()
+            except Exception:
+                pass
+            self.nest_filtered = rows
 
     def _populate_stripping_filters(self) -> None:
             if not hasattr(self, 'stripping_machine'):
@@ -3115,11 +3277,91 @@ class MainWindowHandlers:
                     snaps = list(groups.get(machine_key, {}).get(dt, []))
                 except Exception:
                     snaps = []
+            self._param_card_index_lookup = {}
+            self._param_card_grip_lookup = {}
+            self._param_card_nest_lookup = {}
+            self._param_card_hairpin_lookup = {}
             self.current_param_card_rows = snaps
             self.param_card_selection = (dt, machine) if snaps else None
             export_btn = getattr(self, 'param_card_export_btn', None)
             if export_btn is not None:
                 export_btn.setEnabled(bool(snaps))
+            if snaps and dt is not None and machine is not None:
+                machine_norm = (machine or '').strip()
+                try:
+                    index_lookup: dict[tuple[str, str, int], IndexSnapshot] = {}
+                    for idx_snap in getattr(self, 'index_snapshots', []):
+                        if not isinstance(idx_snap, IndexSnapshot):
+                            continue
+                        snap_machine = (idx_snap.machine or '').strip()
+                        if snap_machine != machine_norm:
+                            continue
+                        if getattr(idx_snap, 'dt', None) != dt:
+                            continue
+                        step_key = idx_snap.step if idx_snap.step is not None else -1
+                        key = (
+                            (idx_snap.program or '').strip(),
+                            (idx_snap.table or '').strip(),
+                            step_key,
+                        )
+                        index_lookup[key] = idx_snap
+                    self._param_card_index_lookup = index_lookup
+                except Exception:
+                    self._param_card_index_lookup = {}
+                try:
+                    grip_lookup: dict[tuple[str, str], GripSnapshot] = {}
+                    for grip_snap in getattr(self, 'hp_grip_snapshots', []):
+                        if not isinstance(grip_snap, GripSnapshot):
+                            continue
+                        snap_machine = (grip_snap.machine or '').strip()
+                        if snap_machine != machine_norm:
+                            continue
+                        if getattr(grip_snap, 'dt', None) != dt:
+                            continue
+                        key = (
+                            (grip_snap.program or '').strip(),
+                            (grip_snap.pin or '').strip(),
+                        )
+                        grip_lookup[key] = grip_snap
+                    self._param_card_grip_lookup = grip_lookup
+                except Exception:
+                    self._param_card_grip_lookup = {}
+                try:
+                    nest_lookup: dict[tuple[str, str], NestSnapshot] = {}
+                    for nest_snap in getattr(self, 'nest_snapshots', []):
+                        if not isinstance(nest_snap, NestSnapshot):
+                            continue
+                        snap_machine = (nest_snap.machine or '').strip()
+                        if snap_machine != machine_norm:
+                            continue
+                        if getattr(nest_snap, 'dt', None) != dt:
+                            continue
+                        key = (
+                            (nest_snap.program or '').strip(),
+                            (nest_snap.pin or '').strip(),
+                        )
+                        nest_lookup[key] = nest_snap
+                    self._param_card_nest_lookup = nest_lookup
+                except Exception:
+                    self._param_card_nest_lookup = {}
+                try:
+                    hairpin_lookup: dict[tuple[str, str], HairpinSnapshot] = {}
+                    for hair_snap in getattr(self, 'hairpin_snapshots', []):
+                        if not isinstance(hair_snap, HairpinSnapshot):
+                            continue
+                        snap_machine = (hair_snap.machine or '').strip()
+                        if snap_machine != machine_norm:
+                            continue
+                        if getattr(hair_snap, 'dt', None) != dt:
+                            continue
+                        key = (
+                            (hair_snap.program or '').strip(),
+                            (hair_snap.pin or '').strip(),
+                        )
+                        hairpin_lookup[key] = hair_snap
+                    self._param_card_hairpin_lookup = hairpin_lookup
+                except Exception:
+                    self._param_card_hairpin_lookup = {}
             self._update_param_card_table(snaps)
 
     def _update_param_card_table(self, snaps: list[ParamSnapshot] | None) -> None:
@@ -3179,7 +3421,7 @@ class MainWindowHandlers:
                 )
             except Exception:
                 sorted_snaps = list(snaps)
-            param_names = list(PARAM_DISPLAY_ORDER)
+            value_names = list(getattr(self, 'param_card_value_names', list(PARAM_DISPLAY_ORDER)))
             rows: list[list[str]] = []
             for snap in sorted_snaps:
                 program = snap.program or '-'
@@ -3188,7 +3430,7 @@ class MainWindowHandlers:
                 step_val = snap.step if snap.step is not None else '-'
                 step_txt = str(step_val)
                 row_values: list[str] = [program, table_name, pin, step_txt]
-                for name in param_names:
+                for name in value_names:
                     row_values.append(self._param_card_cell_text(snap, name))
                 rows.append(row_values)
             table.setUpdatesEnabled(False)
@@ -3202,32 +3444,100 @@ class MainWindowHandlers:
             except Exception:
                 pass
 
+    def _param_card_struct_text(self, value: object) -> str:
+            text = self._format_struct_value(value)
+            return "" if text == "(brak)" else text
+
     def _param_card_cell_text(self, snap: ParamSnapshot, name: str) -> str:
-            if name == STEP_SPEED_LABEL:
+            if name in PARAM_DISPLAY_ORDER:
+                if name == STEP_SPEED_LABEL:
+                    value = snap.values.get(name)
+                    if value is None:
+                        return ""
+                    try:
+                        return f"{value:g}"
+                    except Exception:
+                        return str(value)
+                include = bool(snap.included.get(name, False))
+                if not include:
+                    return "wył."
                 value = snap.values.get(name)
                 if value is None:
+                    value_txt = ""
+                else:
+                    try:
+                        value_txt = f"{value:g}"
+                    except Exception:
+                        value_txt = str(value)
+                mode = str(snap.modes.get(name, '') or '').upper()
+                if mode:
+                    if value_txt:
+                        return f"{value_txt} ({mode})"
+                    return f"({mode})"
+                return value_txt
+
+            if name in INDEX_PARAM_DISPLAY_ORDER:
+                lookup = getattr(self, '_param_card_index_lookup', {}) or {}
+                program_key = (snap.program or '').strip()
+                table_key = (snap.table or '').strip()
+                step_key = snap.step if snap.step is not None else -1
+                idx_snap = lookup.get((program_key, table_key, step_key))
+                if idx_snap is None:
+                    if name == INDEX_OVERRIDE_LABEL:
+                        return ""
                     return ""
-                try:
-                    return f"{value:g}"
-                except Exception:
-                    return str(value)
-            include = bool(snap.included.get(name, False))
-            if not include:
-                return "wył."
-            value = snap.values.get(name)
-            if value is None:
-                value_txt = ""
-            else:
-                try:
-                    value_txt = f"{value:g}"
-                except Exception:
-                    value_txt = str(value)
-            mode = str(snap.modes.get(name, '') or '').upper()
-            if mode:
-                if value_txt:
-                    return f"{value_txt} ({mode})"
-                return f"({mode})"
-            return value_txt
+                if name == INDEX_OVERRIDE_LABEL:
+                    return self._format_override_value(getattr(idx_snap, 'override', None))
+                include = bool(idx_snap.included.get(name, False))
+                if not include:
+                    return "wył."
+                value = idx_snap.values.get(name)
+                if value is None:
+                    value_txt = ""
+                else:
+                    try:
+                        value_txt = f"{value:g}"
+                    except Exception:
+                        value_txt = str(value)
+                mode = str(idx_snap.modes.get(name, '') or '').upper()
+                if mode:
+                    if value_txt:
+                        return f"{value_txt} ({mode})"
+                    return f"({mode})"
+                return value_txt
+
+            program_key = (snap.program or '').strip()
+            pin_key = (snap.pin or '').strip()
+
+            if name in GRIP_PARAM_ORDER:
+                lookup = getattr(self, '_param_card_grip_lookup', {}) or {}
+                struct_snap = lookup.get((program_key, pin_key))
+                if not struct_snap:
+                    return ""
+                return self._param_card_struct_text(struct_snap.values.get(name, ''))
+
+            if name in NEST_PARAM_ORDER:
+                lookup = getattr(self, '_param_card_nest_lookup', {}) or {}
+                struct_snap = lookup.get((program_key, pin_key))
+                if not struct_snap:
+                    return ""
+                return self._param_card_struct_text(struct_snap.values.get(name, ''))
+
+            if name in HAIRPIN_PARAM_ORDER:
+                lookup = getattr(self, '_param_card_hairpin_lookup', {}) or {}
+                struct_snap = lookup.get((program_key, pin_key))
+                if not struct_snap:
+                    return ""
+                value = struct_snap.values.get(name)
+                if value is None:
+                    for raw_key, display in HAIRPIN_PARAM_LABELS.items():
+                        if display == name:
+                            value = struct_snap.values.get(raw_key)
+                            if value is not None:
+                                break
+                return self._param_card_struct_text(value)
+
+            return ""
 
     def _populate_index_line_filters(self):
             if not hasattr(self, 'index_line_machine'):
@@ -4482,7 +4792,8 @@ class MainWindowHandlers:
                         else:
                             w.writerow(["Pliki", len(paths), "Przykład", paths[0]])
                     w.writerow([])
-                    csv_headers = ["Program", "Tabela", "Pin", "Step"] + list(PARAM_DISPLAY_ORDER)
+                    value_names = list(getattr(self, 'param_card_value_names', list(PARAM_DISPLAY_ORDER)))
+                    csv_headers = ["Program", "Tabela", "Pin", "Step"] + value_names
                     w.writerow(csv_headers)
                     try:
                         sorted_snaps = sorted(
@@ -4503,7 +4814,7 @@ class MainWindowHandlers:
                         step_val = snap.step if snap.step is not None else '-'
                         step_txt = str(step_val)
                         row = [program, table_name, pin, step_txt]
-                        for name in PARAM_DISPLAY_ORDER:
+                        for name in value_names:
                             row.append(self._param_card_cell_text(snap, name))
                         w.writerow(row)
                 self._log(f"[Export] Zapisano kartę parametrów CSV: {path}")

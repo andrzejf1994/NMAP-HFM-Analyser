@@ -10,17 +10,23 @@ from decimal import Decimal, InvalidOperation
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Mapping, Tuple
 import xml.etree.ElementTree as ET
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from hfm_analyzer.constants import INDEX_PARAM_NAMES, PARAM_NAMES
+from hfm_analyzer.data_labels import (
+    GRIP_PARAM_FIELDS,
+    HAIRPIN_PARAM_FIELDS,
+    NEST_PARAM_FIELDS,
+)
 from hfm_analyzer.models import (
     FoundFile,
     GripSnapshot,
     HairpinSnapshot,
     IndexSnapshot,
+    NestSnapshot,
     ParamSnapshot,
 )
 
@@ -116,6 +122,7 @@ class AnalyzeWorker(QThread):
             param_results: list[ParamSnapshot] = []
             index_results: list[IndexSnapshot] = []
             grip_results: list[GripSnapshot] = []
+            nest_results: list[NestSnapshot] = []
             hairpin_results: list[HairpinSnapshot] = []
             total = len(self.files)
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -128,13 +135,21 @@ class AnalyzeWorker(QThread):
                         f"Analizuję plik {done}/{total}: {os.path.basename(found_file.path)}"
                     )
                     try:
-                        param_recs, index_recs, grip_recs, hairpin_recs = future.result()
+                        (
+                            param_recs,
+                            index_recs,
+                            grip_recs,
+                            nest_recs,
+                            hairpin_recs,
+                        ) = future.result()
                         if param_recs:
                             param_results.extend(param_recs)
                         if index_recs:
                             index_results.extend(index_recs)
                         if grip_recs:
                             grip_results.extend(grip_recs)
+                        if nest_recs:
+                            nest_results.extend(nest_recs)
                         if hairpin_recs:
                             hairpin_results.extend(hairpin_recs)
                     except Exception:
@@ -145,6 +160,7 @@ class AnalyzeWorker(QThread):
                     'params': param_results,
                     'index': index_results,
                     'hp_grip': grip_results,
+                    'nest': nest_results,
                     'hairpin': hairpin_results,
                 }
             )
@@ -158,11 +174,13 @@ class AnalyzeWorker(QThread):
         list[ParamSnapshot],
         list[IndexSnapshot],
         list[GripSnapshot],
+        list[NestSnapshot],
         list[HairpinSnapshot],
     ]:
         param_records: list[ParamSnapshot] = []
         index_records: list[IndexSnapshot] = []
         grip_records: list[GripSnapshot] = []
+        nest_records: list[NestSnapshot] = []
         hairpin_records: list[HairpinSnapshot] = []
         if LET is not None:
             parser = LET.XMLParser(huge_tree=True, recover=True)  # type: ignore[arg-type]
@@ -546,9 +564,12 @@ class AnalyzeWorker(QThread):
         def _parse_struct_array(
             parent: ET.Element | None,
             array_name: str,
-            collector: list[GripSnapshot] | list[HairpinSnapshot],
+            collector: list[GripSnapshot]
+            | list[NestSnapshot]
+            | list[HairpinSnapshot],
             snapshot_factory,
             pin_lookup: dict[str, str] | None = None,
+            field_map: Mapping[str, str] | None = None,
         ) -> None:
             if parent is None:
                 return
@@ -561,7 +582,16 @@ class AnalyzeWorker(QThread):
                 return
             for struct in target_array.findall("Struct"):
                 pin = _struct_pin_name(struct, fallback_map=pin_lookup)
-                values = _struct_values(struct)
+                if field_map:
+                    values = {label: "" for label in field_map.values()}
+                    for item in struct.findall("Item"):
+                        raw_name = item.get("name") or ""
+                        if raw_name not in field_map:
+                            continue
+                        label = field_map[raw_name]
+                        values[label] = (item.get("value") or "").strip()
+                else:
+                    values = _struct_values(struct)
                 collector.append(
                     snapshot_factory(
                         dt=found_file.dt,
@@ -573,10 +603,32 @@ class AnalyzeWorker(QThread):
                     )
                 )
 
-        _parse_struct_array(grip_struct, "aHPGripTypes", grip_records, GripSnapshot, pin_map)
-        _parse_struct_array(hairpin_struct, "aHairPinType", hairpin_records, HairpinSnapshot, pin_map)
+        _parse_struct_array(
+            grip_struct,
+            "aHPGripTypes",
+            grip_records,
+            GripSnapshot,
+            pin_map,
+            GRIP_PARAM_FIELDS,
+        )
+        _parse_struct_array(
+            grip_struct,
+            "aHPGripTypes",
+            nest_records,
+            NestSnapshot,
+            pin_map,
+            NEST_PARAM_FIELDS,
+        )
+        _parse_struct_array(
+            hairpin_struct,
+            "aHairPinType",
+            hairpin_records,
+            HairpinSnapshot,
+            pin_map,
+            HAIRPIN_PARAM_FIELDS,
+        )
 
-        return param_records, index_records, grip_records, hairpin_records
+        return param_records, index_records, grip_records, nest_records, hairpin_records
 
 
 class IntranetWorker(QThread):
