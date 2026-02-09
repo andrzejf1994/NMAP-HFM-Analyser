@@ -3,8 +3,8 @@
 Prywatne repozytorium dla kodu analizy parametrów (HFM Analyser).
 
 Uruchamianie lokalne:
-- Wymagany Python 3.9+
-- Przykład: `python main.py` (lub `python backup_analyzer.py` dla zachowania kompatybilności)
+- Dla użytkowników końcowych: uruchom skompilowaną aplikację `.exe`.
+- Dla deweloperów: wymagany Python 3.9+ i uruchomienie `python main.py` (lub `python backup_analyzer.py` dla zachowania kompatybilności).
 
 Dokumentacja użytkownika:
 - [docs/USER_GUIDE_PL.md](docs/USER_GUIDE_PL.md)
