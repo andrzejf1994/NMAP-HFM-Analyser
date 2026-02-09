@@ -32,6 +32,7 @@ class RuntimeSQLiteCache:
         self._local = threading.local()
         self._connections: list[sqlite3.Connection] = []
         self._conn_lock = threading.Lock()
+        self._write_lock = threading.Lock()
         self._machine_cache: dict[str, int] = {}
         self._machine_lock = threading.Lock()
         conn = self._connect()
@@ -44,6 +45,7 @@ class RuntimeSQLiteCache:
         conn.execute("PRAGMA synchronous=OFF")
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
         with self._conn_lock:
             self._connections.append(conn)
         return conn
@@ -216,13 +218,18 @@ class RuntimeSQLiteCache:
             if cached is not None:
                 return cached
         conn = self._get_connection()
-        cur = conn.execute("SELECT id FROM machines WHERE name = ?", (key,))
-        row = cur.fetchone()
-        if row:
-            machine_id = int(row["id"])
-        else:
-            cur = conn.execute("INSERT INTO machines(name) VALUES (?)", (key,))
-            machine_id = int(cur.lastrowid)
+        with self._write_lock:
+            cur = conn.execute("SELECT id FROM machines WHERE name = ?", (key,))
+            row = cur.fetchone()
+            if row:
+                machine_id = int(row["id"])
+            else:
+                conn.execute("INSERT OR IGNORE INTO machines(name) VALUES (?)", (key,))
+                cur = conn.execute("SELECT id FROM machines WHERE name = ?", (key,))
+                row = cur.fetchone()
+                if row is None:
+                    raise RuntimeError("Nie udało się zapisać maszyny w cache SQLite.")
+                machine_id = int(row["id"])
         with self._machine_lock:
             self._machine_cache[key] = machine_id
         return machine_id
@@ -239,30 +246,39 @@ class RuntimeSQLiteCache:
     def record_file(self, machine: str, path: str, mtime: float) -> int:
         machine_id = self._ensure_machine(machine)
         conn = self._get_connection()
-        cur = conn.execute(
-            "SELECT id FROM files WHERE machine_id = ? AND path = ? AND mtime = ?",
-            (machine_id, path, mtime),
-        )
-        row = cur.fetchone()
-        if row:
+        with self._write_lock:
+            cur = conn.execute(
+                "SELECT id FROM files WHERE machine_id = ? AND path = ? AND mtime = ?",
+                (machine_id, path, mtime),
+            )
+            row = cur.fetchone()
+            if row:
+                return int(row["id"])
+            conn.execute(
+                "INSERT OR IGNORE INTO files(machine_id, path, mtime) VALUES (?, ?, ?)",
+                (machine_id, path, mtime),
+            )
+            cur = conn.execute(
+                "SELECT id FROM files WHERE machine_id = ? AND path = ? AND mtime = ?",
+                (machine_id, path, mtime),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError("Nie udało się zapisać pliku w cache SQLite.")
             return int(row["id"])
-        cur = conn.execute(
-            "INSERT INTO files(machine_id, path, mtime) VALUES (?, ?, ?)",
-            (machine_id, path, mtime),
-        )
-        return int(cur.lastrowid)
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         conn = self._get_connection()
-        try:
-            conn.execute("BEGIN")
-            yield conn
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        else:
-            conn.execute("COMMIT")
+        with self._write_lock:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                yield conn
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
 
     def insert_param_snapshots(
         self,
