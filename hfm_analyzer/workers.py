@@ -306,16 +306,18 @@ class AnalyzeWorker(QThread):
                     r_pos = array_map.get("rPos")
                     if r_pos is None:
                         continue
-                    bo_ax = (
-                        array_map.get("boAxIncluded")
-                        or array_map.get("boAxisIncluded")
-                        or array_map.get("boAxInclude")
-                    )
-                    bo_mode = (
-                        array_map.get("boAxModeRel")
-                        or array_map.get("boModeRel")
-                        or array_map.get("boMode")
-                    )
+                    bo_ax = None
+                    for key in ("boAxIncluded", "boAxisIncluded", "boAxInclude"):
+                        candidate = array_map.get(key)
+                        if candidate is not None:
+                            bo_ax = candidate
+                            break
+                    bo_mode = None
+                    for key in ("boAxModeRel", "boModeRel", "boMode"):
+                        candidate = array_map.get(key)
+                        if candidate is not None:
+                            bo_mode = candidate
+                            break
 
                     pos_items = list(r_pos.findall("Item"))
                     inc_items = list(bo_ax.findall("Item")) if bo_ax is not None else []
@@ -399,14 +401,20 @@ class AnalyzeWorker(QThread):
                         array_map[name] = array
 
                     r_pos = array_map.get("rPos")
-                    bo_ax = (
-                        array_map.get("boAxIncluded")
-                        or array_map.get("boAxisIncluded")
-                        or array_map.get("boAxInclude")
-                    )
+                    bo_ax = None
+                    for key in ("boAxIncluded", "boAxisIncluded", "boAxInclude"):
+                        candidate = array_map.get(key)
+                        if candidate is not None:
+                            bo_ax = candidate
+                            break
                     if r_pos is None or bo_ax is None:
                         continue
-                    bo_mode = array_map.get("boModeRel") or array_map.get("boAxModeRel")
+                    bo_mode = None
+                    for key in ("boModeRel", "boAxModeRel"):
+                        candidate = array_map.get(key)
+                        if candidate is not None:
+                            bo_mode = candidate
+                            break
 
                     pos_items = list(r_pos.findall("Item"))
                     inc_items = list(bo_ax.findall("Item"))

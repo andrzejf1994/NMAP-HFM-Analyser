@@ -2202,6 +2202,15 @@ class MainWindowHandlers:
                 nest_records = []
                 hairpin_records = []
 
+            self._log(
+                "[Analysis] Przetworzono rekordy: "
+                f"params={len(param_records)}, "
+                f"index={len(index_records)}, "
+                f"hp_grip={len(hp_grip_records)}, "
+                f"nest={len(nest_records)}, "
+                f"hairpin={len(hairpin_records)}"
+            )
+
             snaps: list[ParamSnapshot] = sorted(param_records, key=lambda r: r.dt)
             self.param_snapshots = snaps
             self.param_card_selection = None
@@ -2214,6 +2223,7 @@ class MainWindowHandlers:
                 grip_snaps = sorted(hp_grip_records, key=lambda r: r.dt)
                 self.hp_grip_snapshots = grip_snaps
                 self.hp_grip_events = self._build_struct_change_events(grip_snaps)
+                self._log(f"[Analysis] Zmiany HP/Grip: {len(self.hp_grip_events)}")
                 self._refresh_hp_grip_columns()
                 self._populate_hp_grip_filters()
             except Exception:
@@ -2222,6 +2232,7 @@ class MainWindowHandlers:
                 nest_snaps = sorted(nest_records, key=lambda r: r.dt)
                 self.nest_snapshots = nest_snaps
                 self.nest_events = self._build_struct_change_events(nest_snaps)
+                self._log(f"[Analysis] Zmiany Nest: {len(self.nest_events)}")
                 self._refresh_nest_columns()
                 self._populate_nest_filters()
             except Exception:
@@ -2230,6 +2241,7 @@ class MainWindowHandlers:
                 hairpin_snaps = sorted(hairpin_records, key=lambda r: r.dt)
                 self.hairpin_snapshots = hairpin_snaps
                 self.hairpin_events = self._build_struct_change_events(hairpin_snaps)
+                self._log(f"[Analysis] Zmiany Hairpin: {len(self.hairpin_events)}")
                 self._refresh_stripping_columns()
                 self._populate_stripping_filters()
             except Exception:
@@ -2365,6 +2377,9 @@ class MainWindowHandlers:
             events.sort(key=lambda x: (x['dt'], x['machine'], x.get('pin', ''), x['step']))
             events = self._deduplicate_param_events(events)
             prog_events.sort(key=lambda x: (x['dt'], x['machine']))
+            self._log(
+                f"[Analysis] Zmiany parametrów: {len(events)} | zmiany programów: {len(prog_events)}"
+            )
             self.analysis_events = events
             self.program_events = prog_events
             self._populate_analysis_filters()
@@ -2375,6 +2390,7 @@ class MainWindowHandlers:
             index_snaps: list[IndexSnapshot] = sorted(index_records, key=lambda r: r.dt)
             self.index_snapshots = index_snaps
             index_events = self._build_index_events(index_snaps, threshold_pct)
+            self._log(f"[Analysis] Zmiany index: {len(index_events)}")
             self.index_events = index_events
             self._populate_index_filters()
             self._apply_index_filters()
@@ -3827,6 +3843,7 @@ class MainWindowHandlers:
             except Exception:
                 return str(value)
 
+    @staticmethod
     def _normalize_struct_scalar(value: object) -> str:
             text = str(value or "").strip()
             if not text:
@@ -3842,6 +3859,7 @@ class MainWindowHandlers:
                 formatted = formatted.rstrip("0").rstrip(".")
             return formatted or "0"
 
+    @staticmethod
     def _format_struct_value(value: object) -> str:
             text = str(value or "").strip()
             if not text:
