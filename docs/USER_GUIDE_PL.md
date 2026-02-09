@@ -10,14 +10,13 @@ Poniżej znajduje się kompletna instrukcja użytkownika „od uruchomienia do k
 ## 1. Uruchomienie aplikacji
 
 ### 1.1. Start programu
-Program uruchamiasz poleceniem:
-```bash
-python main.py
-```
+Program uruchamiasz z poziomu skompilowanej aplikacji `.exe` (dwuklik w plik lub skrót).
+
 W tle wykonuje się:
 1. Inicjalizacja Qt i ustawienie wyglądu (styl „Fusion”, jasna paleta).
 2. Ustawienie ikon aplikacji (jeśli `icon.ico` jest dostępne).
 3. Sprawdzenie ustawionego katalogu z backupami (sieciowy lub lokalny).
+   - Jeśli katalog jest niedostępny, pojawia się okno z informacją o braku dostępu oraz opcjami wskazania nowej ścieżki lub użycia presetów.
 4. Otworzenie głównego okna.
 
 Źródło: `hfm_analyzer/app.py`.
@@ -398,4 +397,3 @@ Najczęściej oznacza:
 - brak analizy (nie uruchomiono „Analizuj zmiany”).
 
 Źródło: `hfm_analyzer/gui/handlers.py`.
-
