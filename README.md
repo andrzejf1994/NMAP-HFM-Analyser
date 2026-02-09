@@ -6,3 +6,5 @@ Uruchamianie lokalne:
 - Wymagany Python 3.9+
 - Przykład: `python main.py` (lub `python backup_analyzer.py` dla zachowania kompatybilności)
 
+Dokumentacja użytkownika:
+- [docs/USER_GUIDE_PL.md](docs/USER_GUIDE_PL.md)
