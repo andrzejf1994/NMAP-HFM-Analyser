@@ -29,6 +29,7 @@ from hfm_analyzer.models import (
     NestSnapshot,
     ParamSnapshot,
 )
+from hfm_analyzer.storage.runtime_sqlite_cache import RuntimeSQLiteCache
 
 try:  # Optional acceleration when lxml is available.
     import lxml.etree as LET  # type: ignore
@@ -94,9 +95,15 @@ class AnalyzeWorker(QThread):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, files: Iterable[FoundFile], max_workers: int | None = None) -> None:
+    def __init__(
+        self,
+        files: Iterable[FoundFile],
+        runtime_cache: RuntimeSQLiteCache,
+        max_workers: int | None = None,
+    ) -> None:
         super().__init__()
         self.files = list(files)
+        self.runtime_cache = runtime_cache
         if max_workers is None:
             try:
                 cpu_workers = os.cpu_count() or 4
@@ -119,18 +126,31 @@ class AnalyzeWorker(QThread):
 
     def run(self) -> None:  # pragma: no cover - executed in background thread
         try:
-            param_results: list[ParamSnapshot] = []
-            index_results: list[IndexSnapshot] = []
-            grip_results: list[GripSnapshot] = []
-            nest_results: list[NestSnapshot] = []
-            hairpin_results: list[HairpinSnapshot] = []
             total = len(self.files)
+            skipped = 0
+            stored = {
+                "params": 0,
+                "index": 0,
+                "hp_grip": 0,
+                "nest": 0,
+                "hairpin": 0,
+            }
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = {executor.submit(self._analyze_file, file): file for file in self.files}
+                futures = {}
+                for found_file in self.files:
+                    try:
+                        mtime = os.path.getmtime(found_file.path)
+                    except Exception:
+                        mtime = 0.0
+                    if self.runtime_cache.has_file(found_file.machine, found_file.path, mtime):
+                        skipped += 1
+                        continue
+                    futures[executor.submit(self._analyze_file, found_file)] = (found_file, mtime)
+                total = len(futures)
                 done = 0
                 for future in as_completed(futures):
                     done += 1
-                    found_file = futures[future]
+                    found_file, mtime = futures[future]
                     self.progress.emit(
                         f"Analizuję plik {done}/{total}: {os.path.basename(found_file.path)}"
                     )
@@ -142,26 +162,34 @@ class AnalyzeWorker(QThread):
                             nest_recs,
                             hairpin_recs,
                         ) = future.result()
+                        file_id = self.runtime_cache.record_file(found_file.machine, found_file.path, mtime)
                         if param_recs:
-                            param_results.extend(param_recs)
+                            stored["params"] += self.runtime_cache.insert_param_snapshots(
+                                file_id, found_file.machine, param_recs
+                            )
                         if index_recs:
-                            index_results.extend(index_recs)
+                            stored["index"] += self.runtime_cache.insert_index_snapshots(
+                                file_id, found_file.machine, index_recs
+                            )
                         if grip_recs:
-                            grip_results.extend(grip_recs)
+                            stored["hp_grip"] += self.runtime_cache.insert_grip_snapshots(
+                                file_id, found_file.machine, grip_recs
+                            )
                         if nest_recs:
-                            nest_results.extend(nest_recs)
+                            stored["nest"] += self.runtime_cache.insert_nest_snapshots(
+                                file_id, found_file.machine, nest_recs
+                            )
                         if hairpin_recs:
-                            hairpin_results.extend(hairpin_recs)
+                            stored["hairpin"] += self.runtime_cache.insert_hairpin_snapshots(
+                                file_id, found_file.machine, hairpin_recs
+                            )
                     except Exception:
                         logging.getLogger(__name__).exception("[AnalyzeWorker] błąd podczas analizy pliku")
                         continue
             self.finished.emit(
                 {
-                    'params': param_results,
-                    'index': index_results,
-                    'hp_grip': grip_results,
-                    'nest': nest_results,
-                    'hairpin': hairpin_results,
+                    'counts': stored,
+                    'skipped': skipped,
                 }
             )
         except Exception as exc:  # pragma: no cover - defensive programming
