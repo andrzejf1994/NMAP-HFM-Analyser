@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QDateTimeEdit,
+    QDialog,
     QFileDialog,
     QHeaderView,
     QLabel,
@@ -59,6 +60,7 @@ from hfm_analyzer.models import (
     NestSnapshot,
     ParamSnapshot,
 )
+from hfm_analyzer.storage.runtime_sqlite_cache import RuntimeSQLiteCache
 from hfm_analyzer.utils import (
     extract_unc_share,
     list_mapped_network_drives,
@@ -108,9 +110,59 @@ class MainWindowHandlers:
                 except Exception:
                     pass
             try:
+                cache = getattr(self, "runtime_cache", None)
+                if cache is not None:
+                    cache.close()
+            except Exception:
+                pass
+            try:
                 super().closeEvent(e)
             except Exception:
                 pass
+
+    def _fetch_param_snapshots(
+        self,
+        *,
+        machine: str | None = None,
+        pin: str | None = None,
+        step: int | None = None,
+        dt: datetime | None = None,
+    ) -> list[ParamSnapshot]:
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                return cache.fetch_param_snapshots(machine=machine, pin=pin, step=step, dt=dt)
+            return list(getattr(self, "param_snapshots", []))
+
+    def _fetch_index_snapshots(
+        self,
+        *,
+        machine: str | None = None,
+        table: str | None = None,
+        step: int | None = None,
+        dt: datetime | None = None,
+    ) -> list[IndexSnapshot]:
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                return cache.fetch_index_snapshots_list(machine=machine, table=table, step=step, dt=dt)
+            return list(getattr(self, "index_snapshots", []))
+
+    def _fetch_struct_snapshots(
+        self,
+        prefix: str,
+        *,
+        machine: str | None = None,
+        pin: str | None = None,
+        dt: datetime | None = None,
+    ) -> list[GripSnapshot | NestSnapshot | HairpinSnapshot]:
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                return cache.fetch_struct_snapshots(prefix, machine=machine, pin=pin, dt=dt)
+            attr = {
+                "grip": "hp_grip_snapshots",
+                "nest": "nest_snapshots",
+                "hairpin": "hairpin_snapshots",
+            }.get(prefix, "")
+            return list(getattr(self, attr, [])) if attr else []
 
     def _apply_styles(self):
             self.setStyleSheet(
@@ -253,7 +305,8 @@ class MainWindowHandlers:
     def _open_settings(self):
             old_path = self.settings.value("base_path", "", type=str)
             old_line_id = self.settings.value("intranet_line_id", 436, type=int)
-            dlg = SettingsDialog(self.settings, self)
+            runtime_db_path = getattr(self, "runtime_cache_path", "")
+            dlg = SettingsDialog(self.settings, self, runtime_db_path=runtime_db_path)
             if dlg.exec_() == QDialog.Accepted:
                 new_path = self.settings.value("base_path", "", type=str)
                 new_line_id = self.settings.value("intranet_line_id", 436, type=int)
@@ -2055,6 +2108,17 @@ class MainWindowHandlers:
                     self.index_table.setRowCount(0)
             except Exception:
                 pass
+            try:
+                cache = getattr(self, "runtime_cache", None)
+                if cache is not None:
+                    cache.close()
+                self.runtime_cache = RuntimeSQLiteCache()
+                self.runtime_cache_path = self.runtime_cache.path
+            except Exception as exc:
+                self.runtime_cache = None
+                self.runtime_cache_path = ""
+                QMessageBox.critical(self, "Błąd", f"Nie udało się utworzyć cache SQLite: {exc}")
+                return
             self.index_events = []
             self.index_filtered_rows = []
             try:
@@ -2110,6 +2174,7 @@ class MainWindowHandlers:
                 pref_workers = 0
             self.a_worker = AnalyzeWorker(
                 analysis_files,
+                runtime_cache=self.runtime_cache,
                 max_workers=(pref_workers if pref_workers and pref_workers > 0 else None),
             )
             self.a_worker.progress.connect(self._on_progress)
@@ -2189,30 +2254,29 @@ class MainWindowHandlers:
                 )
             except Exception:
                 pass
+            cache = getattr(self, "runtime_cache", None)
+            counts = {}
+            skipped = 0
             if isinstance(records, dict):
-                param_records = list(records.get('params') or [])
-                index_records = list(records.get('index') or [])
-                hp_grip_records = list(records.get('hp_grip') or [])
-                nest_records = list(records.get('nest') or [])
-                hairpin_records = list(records.get('hairpin') or [])
-            else:
-                param_records = list(records or [])
-                index_records = []
-                hp_grip_records = []
-                nest_records = []
-                hairpin_records = []
+                counts = dict(records.get("counts") or {})
+                skipped = int(records.get("skipped") or 0)
+            if isinstance(cache, RuntimeSQLiteCache):
+                try:
+                    counts.update(cache.stats())
+                except Exception:
+                    pass
 
             self._log(
                 "[Analysis] Przetworzono rekordy: "
-                f"params={len(param_records)}, "
-                f"index={len(index_records)}, "
-                f"hp_grip={len(hp_grip_records)}, "
-                f"nest={len(nest_records)}, "
-                f"hairpin={len(hairpin_records)}"
+                f"params={counts.get('params', 0)}, "
+                f"index={counts.get('index', 0)}, "
+                f"hp_grip={counts.get('hp_grip', 0)}, "
+                f"nest={counts.get('nest', 0)}, "
+                f"hairpin={counts.get('hairpin', 0)}, "
+                f"pominięto={skipped}"
             )
 
-            snaps: list[ParamSnapshot] = sorted(param_records, key=lambda r: r.dt)
-            self.param_snapshots = snaps
+            self.param_snapshots = []
             self.param_card_selection = None
             self.current_param_card_rows = []
             try:
@@ -2220,8 +2284,9 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                grip_snaps = sorted(hp_grip_records, key=lambda r: r.dt)
-                self.hp_grip_snapshots = grip_snaps
+                grip_snaps = self._fetch_struct_snapshots("grip")
+                grip_snaps.sort(key=lambda r: r.dt)
+                self.hp_grip_snapshots = []
                 self.hp_grip_events = self._build_struct_change_events(grip_snaps)
                 self._log(f"[Analysis] Zmiany HP/Grip: {len(self.hp_grip_events)}")
                 self._refresh_hp_grip_columns()
@@ -2229,8 +2294,9 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                nest_snaps = sorted(nest_records, key=lambda r: r.dt)
-                self.nest_snapshots = nest_snaps
+                nest_snaps = self._fetch_struct_snapshots("nest")
+                nest_snaps.sort(key=lambda r: r.dt)
+                self.nest_snapshots = []
                 self.nest_events = self._build_struct_change_events(nest_snaps)
                 self._log(f"[Analysis] Zmiany Nest: {len(self.nest_events)}")
                 self._refresh_nest_columns()
@@ -2238,8 +2304,9 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                hairpin_snaps = sorted(hairpin_records, key=lambda r: r.dt)
-                self.hairpin_snapshots = hairpin_snaps
+                hairpin_snaps = self._fetch_struct_snapshots("hairpin")
+                hairpin_snaps.sort(key=lambda r: r.dt)
+                self.hairpin_snapshots = []
                 self.hairpin_events = self._build_struct_change_events(hairpin_snaps)
                 self._log(f"[Analysis] Zmiany Hairpin: {len(self.hairpin_events)}")
                 self._refresh_stripping_columns()
@@ -2256,7 +2323,12 @@ class MainWindowHandlers:
                 threshold_pct = float(self.settings.value("large_change_threshold_pct", 10, type=int))
             except Exception:
                 threshold_pct = 10.0
-            for s in snaps:
+            param_iter = None
+            if isinstance(cache, RuntimeSQLiteCache):
+                param_iter = cache.iter_param_snapshots(order_by_ts=True)
+            else:
+                param_iter = []
+            for s in param_iter:
                 key = (s.machine, s.table, s.pin, s.step)
                 if key not in baseline_done:
 
@@ -2285,8 +2357,8 @@ class MainWindowHandlers:
                     last_prog[key] = s.program
                     continue
 
-                changed_cols = {}
-                large_cols = {}
+                changed_cols: dict[str, str] = {}
+                large_cols: dict[str, bool] = {}
                 for name in PARAM_DISPLAY_ORDER:
                     if name == 'Step Speed':
                         prev_speed = prev.values.get('Step Speed')
@@ -2301,8 +2373,6 @@ class MainWindowHandlers:
                             except Exception:
                                 changed = curr_speed != prev_speed
 
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         if not changed:
                             continue
 
@@ -2318,19 +2388,16 @@ class MainWindowHandlers:
                             and abs(prev_speed) > 1e-12
                         ):
                             pct = abs((curr_speed - prev_speed) / prev_speed) * 100.0
-                            large_cols[name] = (pct >= threshold_pct)
+                            if pct >= threshold_pct:
+                                large_cols[name] = True
                         continue
 
                     if name not in PARAM_NAMES:
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         continue
 
                     prev_include = bool(prev.included.get(name, False))
                     curr_include = bool(s.included.get(name, False))
                     if not prev_include and not curr_include:
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         continue
 
                     prev_mode = prev.modes.get(name, 'ABS')
@@ -2342,8 +2409,6 @@ class MainWindowHandlers:
                     mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                     include_changed = curr_include != prev_include
 
-                    changed_cols[name] = ""
-                    large_cols[name] = False
                     if not (value_changed or mode_changed or include_changed):
                         continue
 
@@ -2355,7 +2420,8 @@ class MainWindowHandlers:
                     changed_cols[name] = f"{prev_txt} -> {curr_txt}"
                     if prev_include and curr_include and abs(prev_value) > 1e-12:
                         pct = abs((curr_value - prev_value) / prev_value) * 100.0
-                        large_cols[name] = (pct >= threshold_pct)
+                        if pct >= threshold_pct:
+                            large_cols[name] = True
                 if any(changed_cols.values()):
                     row = {
                         'dt': s.dt,
@@ -2365,10 +2431,11 @@ class MainWindowHandlers:
                         'pin': s.pin,
                         'step': s.step,
                         'cols': changed_cols,
-                        'large': large_cols,
                         'path': s.path,
                         'type': 'change',
                     }
+                    if large_cols:
+                        row['large'] = large_cols
                     events.append(row)
 
                 last_state[key] = s
@@ -2383,16 +2450,24 @@ class MainWindowHandlers:
             self.analysis_events = events
             self.program_events = prog_events
             self._populate_analysis_filters()
+            self._analysis_auto_resize = True
             self._apply_analysis_filters()
             self._populate_program_filters()
             self._apply_program_filters()
 
-            index_snaps: list[IndexSnapshot] = sorted(index_records, key=lambda r: r.dt)
-            self.index_snapshots = index_snaps
-            index_events = self._build_index_events(index_snaps, threshold_pct)
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                index_iter = cache.iter_index_snapshots()
+            else:
+                index_snaps: list[IndexSnapshot] = self._fetch_index_snapshots()
+                index_snaps.sort(key=lambda r: r.dt)
+                index_iter = index_snaps
+            self.index_snapshots = []
+            index_events = self._build_index_events(index_iter, threshold_pct)
             self._log(f"[Analysis] Zmiany index: {len(index_events)}")
             self.index_events = index_events
             self._populate_index_filters()
+            self._index_auto_resize = True
             self._apply_index_filters()
             try:
                 self._populate_param_line_filters()
@@ -2545,8 +2620,6 @@ class MainWindowHandlers:
                 rows.append(e)
 
 
-            rows.sort(key=lambda x: (x['dt'], x['machine'], x.get('pin',''), x['step']))
-
             self.analysis_table.setRowCount(len(rows))
             highlight = QBrush(QColor('#fff6bf'))
             big_change = QBrush(QColor('#ffd6d6'))
@@ -2577,7 +2650,9 @@ class MainWindowHandlers:
                 if path_text:
                     path_item.setToolTip(path_text)
                 self.analysis_table.setItem(i, path_col_idx, path_item)
-            self.analysis_table.resizeColumnsToContents()
+            if getattr(self, "_analysis_auto_resize", False):
+                self.analysis_table.resizeColumnsToContents()
+                self._analysis_auto_resize = False
             self.analysis_filtered_rows = rows
 
     def _set_combo_items(self, combo: QComboBox, items: Iterable[str], *, sort_items: bool = True) -> None:
@@ -2608,20 +2683,24 @@ class MainWindowHandlers:
     def _populate_param_line_filters(self):
             if not hasattr(self, 'param_line_machine'):
                 return
-            snaps = getattr(self, 'param_snapshots', [])
-            hierarchy: dict[str, dict[str, set[str]]] = {}
-            for snap in snaps:
-                machine = (snap.machine or '').strip()
-                if not machine:
-                    continue
-                machine_entry = hierarchy.setdefault(machine, {})
-                pin = (snap.pin or '').strip()
-                if pin:
-                    step_set = machine_entry.setdefault(pin, set())
-                else:
-                    step_set = machine_entry.setdefault('', set())
-                if snap.step is not None:
-                    step_set.add(str(snap.step))
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                hierarchy = cache.fetch_param_line_hierarchy()
+            else:
+                snaps = getattr(self, 'param_snapshots', [])
+                hierarchy: dict[str, dict[str, set[str]]] = {}
+                for snap in snaps:
+                    machine = (snap.machine or '').strip()
+                    if not machine:
+                        continue
+                    machine_entry = hierarchy.setdefault(machine, {})
+                    pin = (snap.pin or '').strip()
+                    if pin:
+                        step_set = machine_entry.setdefault(pin, set())
+                    else:
+                        step_set = machine_entry.setdefault('', set())
+                    if snap.step is not None:
+                        step_set.add(str(snap.step))
             self._param_line_hierarchy = hierarchy
             self._set_combo_items(self.param_line_machine, hierarchy.keys())
             self._update_param_line_pin_options()
@@ -2674,20 +2753,24 @@ class MainWindowHandlers:
             charts = getattr(self, 'param_line_charts', {})
             if not charts:
                 return
-            snaps = getattr(self, 'param_snapshots', [])
             machine = self.param_line_machine.currentText().strip() if self.param_line_machine.count() else "(Wszystkie)"
             pin = self.param_line_pin.currentText().strip() if self.param_line_pin.count() else "(Wszystkie)"
             step = self.param_line_step.currentText().strip() if self.param_line_step.count() else "(Wszystkie)"
+            step_value = None
+            if step and step != "(Wszystkie)":
+                try:
+                    step_value = int(step)
+                except Exception:
+                    step_value = None
+            snaps = self._fetch_param_snapshots(
+                machine=None if machine == "(Wszystkie)" else machine,
+                pin=None if pin == "(Wszystkie)" else pin,
+                step=step_value,
+            )
 
             for name, chart in charts.items():
                 points: list[tuple[datetime, float]] = []
                 for snap in snaps:
-                    if machine and machine != "(Wszystkie)" and snap.machine != machine:
-                        continue
-                    if pin and pin != "(Wszystkie)" and str(snap.pin or "") != pin:
-                        continue
-                    if step and step != "(Wszystkie)" and str(snap.step) != step:
-                        continue
                     if name != STEP_SPEED_LABEL and not snap.included.get(name, False):
                         continue
                     value = snap.values.get(name)
@@ -2719,13 +2802,17 @@ class MainWindowHandlers:
                         if text:
                             keys.add(text)
             else:
-                for snap in getattr(self, 'hp_grip_snapshots', []):
-                    if not isinstance(snap, GripSnapshot):
-                        continue
-                    for key in getattr(snap, 'values', {}).keys():
-                        text = str(key or '').strip()
-                        if text:
-                            keys.add(text)
+                cache = getattr(self, "runtime_cache", None)
+                if isinstance(cache, RuntimeSQLiteCache):
+                    keys.update(cache.fetch_struct_value_keys("grip"))
+                else:
+                    for snap in getattr(self, 'hp_grip_snapshots', []):
+                        if not isinstance(snap, GripSnapshot):
+                            continue
+                        for key in getattr(snap, 'values', {}).keys():
+                            text = str(key or '').strip()
+                            if text:
+                                keys.add(text)
             ordered: list[str] = []
             for key in GRIP_PARAM_ORDER:
                 if key in keys:
@@ -2745,13 +2832,17 @@ class MainWindowHandlers:
                         if text:
                             keys.add(text)
             else:
-                for snap in getattr(self, 'nest_snapshots', []):
-                    if not isinstance(snap, NestSnapshot):
-                        continue
-                    for key in getattr(snap, 'values', {}).keys():
-                        text = str(key or '').strip()
-                        if text:
-                            keys.add(text)
+                cache = getattr(self, "runtime_cache", None)
+                if isinstance(cache, RuntimeSQLiteCache):
+                    keys.update(cache.fetch_struct_value_keys("nest"))
+                else:
+                    for snap in getattr(self, 'nest_snapshots', []):
+                        if not isinstance(snap, NestSnapshot):
+                            continue
+                        for key in getattr(snap, 'values', {}).keys():
+                            text = str(key or '').strip()
+                            if text:
+                                keys.add(text)
             ordered: list[str] = []
             for key in NEST_PARAM_ORDER:
                 if key in keys:
@@ -2771,13 +2862,17 @@ class MainWindowHandlers:
                         if text:
                             keys.add(text)
             else:
-                for snap in getattr(self, 'hairpin_snapshots', []):
-                    if not isinstance(snap, HairpinSnapshot):
-                        continue
-                    for key in getattr(snap, 'values', {}).keys():
-                        text = str(key or '').strip()
-                        if text:
-                            keys.add(text)
+                cache = getattr(self, "runtime_cache", None)
+                if isinstance(cache, RuntimeSQLiteCache):
+                    keys.update(cache.fetch_struct_value_keys("hairpin"))
+                else:
+                    for snap in getattr(self, 'hairpin_snapshots', []):
+                        if not isinstance(snap, HairpinSnapshot):
+                            continue
+                        for key in getattr(snap, 'values', {}).keys():
+                            text = str(key or '').strip()
+                            if text:
+                                keys.add(text)
             normalized: dict[str, str] = {}
             for source in keys:
                 if source in HAIRPIN_PARAM_EXCLUDE:
@@ -3170,17 +3265,20 @@ class MainWindowHandlers:
             machine_combo = getattr(self, 'param_card_machine', None)
             if dt_combo is None or machine_combo is None:
                 return
-            snaps = getattr(self, 'param_snapshots', [])
-            groups: dict[str, dict[datetime, list[ParamSnapshot]]] = {}
-            for snap in snaps:
-                if not isinstance(snap, ParamSnapshot):
-                    continue
-                dt = getattr(snap, 'dt', None)
-                if not isinstance(dt, datetime):
-                    continue
-                machine_key = snap.machine or ''
-                machine_map = groups.setdefault(machine_key, {})
-                machine_map.setdefault(dt, []).append(snap)
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                groups: dict[str, list[datetime]] = cache.fetch_param_card_groups()
+            else:
+                snaps = getattr(self, 'param_snapshots', [])
+                groups = {}
+                for snap in snaps:
+                    if not isinstance(snap, ParamSnapshot):
+                        continue
+                    dt = getattr(snap, 'dt', None)
+                    if not isinstance(dt, datetime):
+                        continue
+                    machine_key = snap.machine or ''
+                    groups.setdefault(machine_key, []).append(dt)
             self.param_card_groups = groups
             self.param_card_selection = None
             self.current_param_card_rows = []
@@ -3240,7 +3338,7 @@ class MainWindowHandlers:
             dt_combo.blockSignals(True)
             dt_combo.clear()
             groups = getattr(self, 'param_card_groups', {})
-            machine_map = groups.get(machine_key or '', {})
+            machine_map = groups.get(machine_key or '', [])
             if not machine_map:
                 dt_combo.addItem("(Brak danych)")
                 dt_combo.setEnabled(False)
@@ -3248,9 +3346,9 @@ class MainWindowHandlers:
                 self._set_param_card_group(None, None)
                 return
             try:
-                sorted_datetimes = sorted(machine_map.keys(), reverse=True)
+                sorted_datetimes = sorted(set(machine_map), reverse=True)
             except Exception:
-                sorted_datetimes = list(machine_map.keys())
+                sorted_datetimes = list(machine_map)
             for dt in sorted_datetimes:
                 try:
                     label = dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -3290,7 +3388,12 @@ class MainWindowHandlers:
             if dt is not None and machine is not None:
                 try:
                     machine_key = machine or ''
-                    snaps = list(groups.get(machine_key, {}).get(dt, []))
+                    cache = getattr(self, "runtime_cache", None)
+                    if isinstance(cache, RuntimeSQLiteCache):
+                        snaps = cache.fetch_param_snapshots(machine=machine_key, dt=dt)
+                    else:
+                        machine_map = groups.get(machine_key, {})
+                        snaps = list(machine_map.get(dt, []))
                 except Exception:
                     snaps = []
             self._param_card_index_lookup = {}
@@ -3306,13 +3409,8 @@ class MainWindowHandlers:
                 machine_norm = (machine or '').strip()
                 try:
                     index_lookup: dict[tuple[str, str, int], IndexSnapshot] = {}
-                    for idx_snap in getattr(self, 'index_snapshots', []):
+                    for idx_snap in self._fetch_index_snapshots(machine=machine_norm, dt=dt):
                         if not isinstance(idx_snap, IndexSnapshot):
-                            continue
-                        snap_machine = (idx_snap.machine or '').strip()
-                        if snap_machine != machine_norm:
-                            continue
-                        if getattr(idx_snap, 'dt', None) != dt:
                             continue
                         step_key = idx_snap.step if idx_snap.step is not None else -1
                         key = (
@@ -3326,13 +3424,8 @@ class MainWindowHandlers:
                     self._param_card_index_lookup = {}
                 try:
                     grip_lookup: dict[tuple[str, str], GripSnapshot] = {}
-                    for grip_snap in getattr(self, 'hp_grip_snapshots', []):
+                    for grip_snap in self._fetch_struct_snapshots("grip", machine=machine_norm, dt=dt):
                         if not isinstance(grip_snap, GripSnapshot):
-                            continue
-                        snap_machine = (grip_snap.machine or '').strip()
-                        if snap_machine != machine_norm:
-                            continue
-                        if getattr(grip_snap, 'dt', None) != dt:
                             continue
                         key = (
                             (grip_snap.program or '').strip(),
@@ -3344,13 +3437,8 @@ class MainWindowHandlers:
                     self._param_card_grip_lookup = {}
                 try:
                     nest_lookup: dict[tuple[str, str], NestSnapshot] = {}
-                    for nest_snap in getattr(self, 'nest_snapshots', []):
+                    for nest_snap in self._fetch_struct_snapshots("nest", machine=machine_norm, dt=dt):
                         if not isinstance(nest_snap, NestSnapshot):
-                            continue
-                        snap_machine = (nest_snap.machine or '').strip()
-                        if snap_machine != machine_norm:
-                            continue
-                        if getattr(nest_snap, 'dt', None) != dt:
                             continue
                         key = (
                             (nest_snap.program or '').strip(),
@@ -3362,13 +3450,8 @@ class MainWindowHandlers:
                     self._param_card_nest_lookup = {}
                 try:
                     hairpin_lookup: dict[tuple[str, str], HairpinSnapshot] = {}
-                    for hair_snap in getattr(self, 'hairpin_snapshots', []):
+                    for hair_snap in self._fetch_struct_snapshots("hairpin", machine=machine_norm, dt=dt):
                         if not isinstance(hair_snap, HairpinSnapshot):
-                            continue
-                        snap_machine = (hair_snap.machine or '').strip()
-                        if snap_machine != machine_norm:
-                            continue
-                        if getattr(hair_snap, 'dt', None) != dt:
                             continue
                         key = (
                             (hair_snap.program or '').strip(),
@@ -3558,20 +3641,24 @@ class MainWindowHandlers:
     def _populate_index_line_filters(self):
             if not hasattr(self, 'index_line_machine'):
                 return
-            snaps = getattr(self, 'index_snapshots', [])
-            hierarchy: dict[str, dict[str, set[str]]] = {}
-            for snap in snaps:
-                machine = (snap.machine or '').strip()
-                if not machine:
-                    continue
-                machine_entry = hierarchy.setdefault(machine, {})
-                table = (snap.table or '').strip()
-                if table:
-                    step_set = machine_entry.setdefault(table, set())
-                else:
-                    step_set = machine_entry.setdefault('', set())
-                if snap.step is not None:
-                    step_set.add(str(snap.step))
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                hierarchy = cache.fetch_index_line_hierarchy()
+            else:
+                snaps = getattr(self, 'index_snapshots', [])
+                hierarchy: dict[str, dict[str, set[str]]] = {}
+                for snap in snaps:
+                    machine = (snap.machine or '').strip()
+                    if not machine:
+                        continue
+                    machine_entry = hierarchy.setdefault(machine, {})
+                    table = (snap.table or '').strip()
+                    if table:
+                        step_set = machine_entry.setdefault(table, set())
+                    else:
+                        step_set = machine_entry.setdefault('', set())
+                    if snap.step is not None:
+                        step_set.add(str(snap.step))
             self._index_line_hierarchy = hierarchy
             self._set_combo_items(self.index_line_machine, hierarchy.keys())
             self._update_index_line_table_options()
@@ -3624,20 +3711,24 @@ class MainWindowHandlers:
             charts = getattr(self, 'index_line_charts', {})
             if not charts:
                 return
-            snaps = getattr(self, 'index_snapshots', [])
             machine = self.index_line_machine.currentText().strip() if self.index_line_machine.count() else "(Wszystkie)"
             table = self.index_line_pin.currentText().strip() if self.index_line_pin.count() else "(Wszystkie)"
             step = self.index_line_step.currentText().strip() if self.index_line_step.count() else "(Wszystkie)"
+            step_value = None
+            if step and step != "(Wszystkie)":
+                try:
+                    step_value = int(step)
+                except Exception:
+                    step_value = None
+            snaps = self._fetch_index_snapshots(
+                machine=None if machine == "(Wszystkie)" else machine,
+                table=None if table == "(Wszystkie)" else table,
+                step=step_value,
+            )
 
             for name, chart in charts.items():
                 points: list[tuple[datetime, float]] = []
                 for snap in snaps:
-                    if machine and machine != "(Wszystkie)" and snap.machine != machine:
-                        continue
-                    if table and table != "(Wszystkie)" and str(snap.table or "") != table:
-                        continue
-                    if step and step != "(Wszystkie)" and str(snap.step) != step:
-                        continue
                     if name == INDEX_OVERRIDE_LABEL:
                         value = snap.override
                     else:
@@ -3787,8 +3878,6 @@ class MainWindowHandlers:
                         continue
                 rows.append(e)
 
-            rows.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
-
             self.index_table.setRowCount(len(rows))
             highlight = QBrush(QColor('#fff6bf'))
             big_change = QBrush(QColor('#ffd6d6'))
@@ -3818,7 +3907,9 @@ class MainWindowHandlers:
                 if path_text:
                     path_item.setToolTip(path_text)
                 self.index_table.setItem(i, path_col_idx, path_item)
-            self.index_table.resizeColumnsToContents()
+            if getattr(self, "_index_auto_resize", False):
+                self.index_table.resizeColumnsToContents()
+                self._index_auto_resize = False
             self.index_filtered_rows = rows
 
     def _format_index_value(self, include: bool, value: float, mode: str) -> str:
@@ -3926,7 +4017,7 @@ class MainWindowHandlers:
             events.sort(key=lambda e: (e.get('dt'), e.get('machine'), e.get('pin')))
             return events
 
-    def _build_index_events(self, snaps: list[IndexSnapshot], threshold_pct: float) -> list[dict]:
+    def _build_index_events(self, snaps: Iterable[IndexSnapshot], threshold_pct: float) -> list[dict]:
             events: list[dict] = []
             last_state: dict[tuple[str, str, int], IndexSnapshot] = {}
             last_prog: dict[tuple[str, str, int], str] = {}
@@ -3963,8 +4054,6 @@ class MainWindowHandlers:
                         else:
                             changed = abs(curr_val - prev_val) > 1e-12
 
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         if not changed:
                             continue
 
@@ -3979,8 +4068,6 @@ class MainWindowHandlers:
                     prev_include = bool(prev.included.get(name, False))
                     curr_include = bool(s.included.get(name, False))
                     if not prev_include and not curr_include:
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         continue
 
                     prev_mode = prev.modes.get(name, 'ABS')
@@ -3992,8 +4079,6 @@ class MainWindowHandlers:
                     mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                     include_changed = curr_include != prev_include
 
-                    changed_cols[name] = ""
-                    large_cols[name] = False
                     if not (value_changed or mode_changed or include_changed):
                         continue
 
@@ -4005,10 +4090,11 @@ class MainWindowHandlers:
                     changed_cols[name] = f"{prev_txt} -> {curr_txt}"
                     if prev_include and curr_include and abs(prev_value) > 1e-12:
                         pct = abs((curr_value - prev_value) / prev_value) * 100.0
-                        large_cols[name] = (pct >= threshold_pct)
+                        if pct >= threshold_pct:
+                            large_cols[name] = True
 
                 if any(changed_cols.values()):
-                    events.append({
+                    row = {
                         'dt': s.dt,
                         'machine': s.machine,
                         'program': s.program,
@@ -4016,10 +4102,12 @@ class MainWindowHandlers:
                         'step': s.step,
                         'pin': '',
                         'cols': changed_cols,
-                        'large': large_cols,
                         'path': s.path,
                         'type': 'index_change',
-                    })
+                    }
+                    if large_cols:
+                        row['large'] = large_cols
+                    events.append(row)
 
                 last_state[key] = s
                 last_prog[key] = s.program

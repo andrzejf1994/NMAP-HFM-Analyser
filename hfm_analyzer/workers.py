@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import glob
 import logging
 import os
 import re
 from decimal import Decimal, InvalidOperation
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from datetime import datetime, timedelta
 from typing import Iterable, List, Mapping, Tuple
 import xml.etree.ElementTree as ET
@@ -29,6 +28,7 @@ from hfm_analyzer.models import (
     NestSnapshot,
     ParamSnapshot,
 )
+from hfm_analyzer.storage.runtime_sqlite_cache import RuntimeSQLiteCache
 
 try:  # Optional acceleration when lxml is available.
     import lxml.etree as LET  # type: ignore
@@ -64,20 +64,41 @@ class ScanWorker(QThread):
                 yyyy_mm_dd = day.strftime("%Y-%m-%d")
                 for machine in self.machines:
                     day_dir = os.path.join(self.base_path, machine, yyyy, mm, yyyy_mm_dd)
-                    pattern = os.path.join(day_dir, f"{machine}_{yyyy_mm_dd}_*.xml")
-                    for file_path in glob.glob(pattern):
-                        try:
-                            if not os.path.isfile(file_path):
-                                continue
-                            parts = os.path.basename(file_path).split("_")
-                            if len(parts) < 3:
-                                continue
-                            dt_str = parts[1] + "_" + parts[2].replace(".xml", "")
-                            file_dt = datetime.strptime(dt_str, "%Y-%m-%d_%H-%M-%S").replace(second=0)
-                            if self.start_dt <= file_dt <= self.end_dt:
-                                found.append(FoundFile(machine=machine, dt=file_dt, path=file_path))
-                        except Exception:
-                            continue
+                    if not os.path.isdir(day_dir):
+                        continue
+                    prefix = f"{machine}_{yyyy_mm_dd}_"
+                    try:
+                        with os.scandir(day_dir) as entries:
+                            for entry in entries:
+                                try:
+                                    if not entry.is_file():
+                                        continue
+                                    name = entry.name
+                                    if not name.startswith(prefix) or not name.endswith(".xml"):
+                                        continue
+                                    time_part = name[len(prefix):-4]
+                                    parts = time_part.split("-")
+                                    if len(parts) < 2:
+                                        continue
+                                    if not parts[0].isdigit() or not parts[1].isdigit():
+                                        continue
+                                    hour = int(parts[0])
+                                    minute = int(parts[1])
+                                    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                                        continue
+                                    file_dt = datetime(day.year, day.month, day.day, hour, minute, 0)
+                                    if self.start_dt <= file_dt <= self.end_dt:
+                                        found.append(
+                                            FoundFile(
+                                                machine=machine,
+                                                dt=file_dt,
+                                                path=entry.path,
+                                            )
+                                        )
+                                except Exception:
+                                    continue
+                    except Exception:
+                        continue
                 day += timedelta(days=1)
             self.finished.emit(found)
         except Exception as exc:  # pragma: no cover - defensive programming
@@ -94,9 +115,15 @@ class AnalyzeWorker(QThread):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, files: Iterable[FoundFile], max_workers: int | None = None) -> None:
+    def __init__(
+        self,
+        files: Iterable[FoundFile],
+        runtime_cache: RuntimeSQLiteCache,
+        max_workers: int | None = None,
+    ) -> None:
         super().__init__()
         self.files = list(files)
+        self.runtime_cache = runtime_cache
         if max_workers is None:
             try:
                 cpu_workers = os.cpu_count() or 4
@@ -119,49 +146,90 @@ class AnalyzeWorker(QThread):
 
     def run(self) -> None:  # pragma: no cover - executed in background thread
         try:
-            param_results: list[ParamSnapshot] = []
-            index_results: list[IndexSnapshot] = []
-            grip_results: list[GripSnapshot] = []
-            nest_results: list[NestSnapshot] = []
-            hairpin_results: list[HairpinSnapshot] = []
-            total = len(self.files)
+            skipped = 0
+            stored = {
+                "params": 0,
+                "index": 0,
+                "hp_grip": 0,
+                "nest": 0,
+                "hairpin": 0,
+            }
+            to_process: list[tuple[FoundFile, float]] = []
+            for found_file in self.files:
+                try:
+                    mtime = os.path.getmtime(found_file.path)
+                except Exception:
+                    mtime = 0.0
+                if self.runtime_cache.has_file(found_file.machine, found_file.path, mtime):
+                    skipped += 1
+                    continue
+                to_process.append((found_file, mtime))
+            total = len(to_process)
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = {executor.submit(self._analyze_file, file): file for file in self.files}
+                futures: dict = {}
+                pending = set()
+                submit_limit = max(1, self.max_workers * 2)
+                index = 0
+                while index < total and len(pending) < submit_limit:
+                    found_file, mtime = to_process[index]
+                    future = executor.submit(self._analyze_file, found_file)
+                    futures[future] = (found_file, mtime)
+                    pending.add(future)
+                    index += 1
                 done = 0
-                for future in as_completed(futures):
-                    done += 1
-                    found_file = futures[future]
-                    self.progress.emit(
-                        f"Analizuję plik {done}/{total}: {os.path.basename(found_file.path)}"
-                    )
-                    try:
-                        (
-                            param_recs,
-                            index_recs,
-                            grip_recs,
-                            nest_recs,
-                            hairpin_recs,
-                        ) = future.result()
-                        if param_recs:
-                            param_results.extend(param_recs)
-                        if index_recs:
-                            index_results.extend(index_recs)
-                        if grip_recs:
-                            grip_results.extend(grip_recs)
-                        if nest_recs:
-                            nest_results.extend(nest_recs)
-                        if hairpin_recs:
-                            hairpin_results.extend(hairpin_recs)
-                    except Exception:
-                        logging.getLogger(__name__).exception("[AnalyzeWorker] błąd podczas analizy pliku")
-                        continue
+                while pending:
+                    done_set, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done_set:
+                        done += 1
+                        found_file, mtime = futures.pop(future)
+                        self.progress.emit(
+                            f"Analizuję plik {done}/{total}: {os.path.basename(found_file.path)}"
+                        )
+                        try:
+                            (
+                                param_recs,
+                                index_recs,
+                                grip_recs,
+                                nest_recs,
+                                hairpin_recs,
+                            ) = future.result()
+                            file_id = self.runtime_cache.record_file(
+                                found_file.machine, found_file.path, mtime
+                            )
+                            if param_recs:
+                                stored["params"] += self.runtime_cache.insert_param_snapshots(
+                                    file_id, found_file.machine, param_recs
+                                )
+                            if index_recs:
+                                stored["index"] += self.runtime_cache.insert_index_snapshots(
+                                    file_id, found_file.machine, index_recs
+                                )
+                            if grip_recs:
+                                stored["hp_grip"] += self.runtime_cache.insert_grip_snapshots(
+                                    file_id, found_file.machine, grip_recs
+                                )
+                            if nest_recs:
+                                stored["nest"] += self.runtime_cache.insert_nest_snapshots(
+                                    file_id, found_file.machine, nest_recs
+                                )
+                            if hairpin_recs:
+                                stored["hairpin"] += self.runtime_cache.insert_hairpin_snapshots(
+                                    file_id, found_file.machine, hairpin_recs
+                                )
+                        except Exception:
+                            logging.getLogger(__name__).exception(
+                                "[AnalyzeWorker] błąd podczas analizy pliku"
+                            )
+                        while index < total and len(pending) < submit_limit:
+                            next_file, next_mtime = to_process[index]
+                            next_future = executor.submit(self._analyze_file, next_file)
+                            futures[next_future] = (next_file, next_mtime)
+                            pending.add(next_future)
+                            index += 1
             self.finished.emit(
                 {
-                    'params': param_results,
-                    'index': index_results,
-                    'hp_grip': grip_results,
-                    'nest': nest_results,
-                    'hairpin': hairpin_results,
+                    'counts': stored,
+                    'skipped': skipped,
                 }
             )
         except Exception as exc:  # pragma: no cover - defensive programming

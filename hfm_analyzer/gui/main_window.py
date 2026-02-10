@@ -50,6 +50,7 @@ from hfm_analyzer.models import (
     IndexSnapshot,
     ParamSnapshot,
 )
+from hfm_analyzer.storage.runtime_sqlite_cache import RuntimeSQLiteCache
 from hfm_analyzer.gui.handlers import MainWindowHandlers
 from hfm_analyzer.gui.tabs import (
     ChangesTab,
@@ -75,6 +76,12 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
     def __init__(self, settings: QSettings):
         super().__init__()
         self.settings = settings
+        try:
+            self.runtime_cache = RuntimeSQLiteCache()
+            self.runtime_cache_path = self.runtime_cache.path
+        except Exception:
+            self.runtime_cache = None
+            self.runtime_cache_path = ""
         app = QApplication.instance()
         if app is not None and not app.windowIcon().isNull():
             self.setWindowIcon(app.windowIcon())
