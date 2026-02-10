@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QSettings
+from PyQt5.QtCore import QSettings, Qt, QObject, pyqtSignal, QThread
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -26,10 +26,27 @@ from hfm_analyzer.constants import (
 from hfm_analyzer.utils import network_path_available
 from hfm_analyzer.gui.utils import _maybe_offer_drive_mapping
 
+
+class _PathCheckWorker(QObject):
+    finished = pyqtSignal(bool)
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self._path = path
+
+    def run(self) -> None:
+        available = network_path_available(self._path)
+        self.finished.emit(available)
+
 class SettingsDialog(QDialog):
     """Application preferences dialog."""
 
-    def __init__(self, settings: QSettings, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        settings: QSettings,
+        parent: QWidget | None = None,
+        runtime_db_path: str | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Ustawienia")
         self.settings = settings
@@ -66,6 +83,14 @@ class SettingsDialog(QDialog):
         self.intra_days_back_spin.setRange(0, 30)
         self.intra_days_back_spin.setValue(self.settings.value("intranet_days_back", 1, type=int))
 
+        db_path = (runtime_db_path or "").strip()
+        self.db_path_label = QLabel(db_path or "(brak)")
+        self.db_path_label.setWordWrap(True)
+        try:
+            self.db_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        except Exception:
+            pass
+
         browse_btn = QPushButton("Przeglądaj")
         browse_btn.clicked.connect(self._browse)
 
@@ -87,6 +112,7 @@ class SettingsDialog(QDialog):
         form.addRow("ID linii (intranet):", self.line_id_spin)
         form.addRow("Dni wstecz (Intranet):", self.intra_days_back_spin)
         form.addRow("Wyklucz maszyny (SAP):", self.intra_excl_edit)
+        form.addRow("Baza danych (SQLite):", self.db_path_label)
 
         presets = QHBoxLayout()
         presets.addWidget(preset_evo)
@@ -176,36 +202,40 @@ class NetworkCheckDialog(QDialog):
         self.path_label = QLabel()
         self.path_label.setWordWrap(True)
 
-        retry_btn = QPushButton("Spróbuj ponownie")
-        retry_btn.clicked.connect(self._on_retry)
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
 
-        quit_btn = QPushButton("Zamknij")
-        quit_btn.clicked.connect(self.reject)
+        self.retry_btn = QPushButton("Spróbuj ponownie")
+        self.retry_btn.clicked.connect(self._on_retry)
 
-        choose_btn = QPushButton("Wskaż katalog")
-        choose_btn.clicked.connect(self._choose_path)
+        self.quit_btn = QPushButton("Zamknij")
+        self.quit_btn.clicked.connect(self.reject)
 
-        preset_evo = QPushButton("Ustaw EVO")
-        preset_evo.clicked.connect(lambda: self._set_path(DEFAULT_PATH_EVO, "BSG EVO"))
-        preset_h66 = QPushButton("Ustaw H66 2")
-        preset_h66.clicked.connect(
+        self.choose_btn = QPushButton("Wskaż katalog")
+        self.choose_btn.clicked.connect(self._choose_path)
+
+        self.preset_evo = QPushButton("Ustaw EVO")
+        self.preset_evo.clicked.connect(lambda: self._set_path(DEFAULT_PATH_EVO, "BSG EVO"))
+        self.preset_h66 = QPushButton("Ustaw H66 2")
+        self.preset_h66.clicked.connect(
             lambda: self._set_path(DEFAULT_PATH_H66_2, "BSG H66 2")
         )
 
         row1 = QHBoxLayout()
-        row1.addWidget(retry_btn)
-        row1.addWidget(quit_btn)
+        row1.addWidget(self.retry_btn)
+        row1.addWidget(self.quit_btn)
 
         row2 = QHBoxLayout()
-        row2.addWidget(choose_btn)
+        row2.addWidget(self.choose_btn)
 
         row3 = QHBoxLayout()
-        row3.addWidget(preset_evo)
-        row3.addWidget(preset_h66)
+        row3.addWidget(self.preset_evo)
+        row3.addWidget(self.preset_h66)
 
         layout = QVBoxLayout()
         layout.addWidget(info)
         layout.addWidget(self.path_label)
+        layout.addWidget(self.status_label)
         layout.addLayout(row2)
         layout.addLayout(row3)
         layout.addStretch(1)
@@ -214,6 +244,7 @@ class NetworkCheckDialog(QDialog):
 
         self._apply_styles()
         self._update_label()
+        self._check_thread = None
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
@@ -233,7 +264,7 @@ class NetworkCheckDialog(QDialog):
             self._set_path(new_path)
 
     def _set_path(self, path: str, display_name: str | None = None) -> None:
-        mapped = _maybe_offer_drive_mapping(self, path).strip()
+        mapped = _maybe_offer_drive_mapping(self, path, fast=True).strip()
         self.settings.setValue("base_path", mapped)
         if mapped:
             self._current_display_name = (display_name or "").strip()
@@ -241,10 +272,51 @@ class NetworkCheckDialog(QDialog):
             self._current_display_name = ""
         self.settings.setValue("base_path_display_name", self._current_display_name)
         self._update_label()
+        self._start_path_check()
 
     def _on_retry(self) -> None:
+        self._start_path_check()
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        for btn in (
+            self.retry_btn,
+            self.choose_btn,
+            self.preset_evo,
+            self.preset_h66,
+        ):
+            try:
+                btn.setEnabled(enabled)
+            except Exception:
+                pass
+
+    def _start_path_check(self) -> None:
+        try:
+            if self._check_thread is not None and self._check_thread.isRunning():
+                return
+        except Exception:
+            pass
         base_path = self.settings.value("base_path", "", type=str)
-        if network_path_available(base_path):
+        if not base_path:
+            QMessageBox.warning(self, "Brak ścieżki", "Wybierz katalog lub preset.")
+            return
+        self.status_label.setText("Sprawdzanie dostępu do katalogu...")
+        self._set_controls_enabled(False)
+        thread = QThread(self)
+        worker = _PathCheckWorker(base_path)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_path_check_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._check_thread = thread
+        thread.start()
+
+    def _on_path_check_finished(self, available: bool) -> None:
+        self._check_thread = None
+        self._set_controls_enabled(True)
+        self.status_label.setText("")
+        if available:
             self.accept()
         else:
             QMessageBox.warning(

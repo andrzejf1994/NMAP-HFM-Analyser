@@ -64,22 +64,22 @@ def _available_drive_letters() -> list[str]:
     ]
 
 
-def _maybe_offer_drive_mapping(parent: QWidget, path: str) -> str:
+def _maybe_offer_drive_mapping(parent: QWidget, path: str, *, fast: bool = False) -> str:
     """Offer mapping for a UNC path when no matching mapped drive exists."""
 
     if not path:
         return path
+    normalized_original = path.replace("/", "\\")
+    if not normalized_original.startswith("\\\\"):
+        return path
 
     try:
-        mapped = map_unc_to_drive_if_possible(path)
+        mapped = path if fast else map_unc_to_drive_if_possible(path)
     except Exception:
         mapped = path
 
-    normalized_original = path.replace("/", "\\")
     normalized_mapped = mapped.replace("/", "\\")
 
-    if not normalized_original.startswith("\\\\"):
-        return mapped
     if normalized_mapped != normalized_original:
         return mapped
 

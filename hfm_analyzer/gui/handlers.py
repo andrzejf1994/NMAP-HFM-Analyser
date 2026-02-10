@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QDateTimeEdit,
+    QDialog,
     QFileDialog,
     QHeaderView,
     QLabel,
@@ -304,7 +305,8 @@ class MainWindowHandlers:
     def _open_settings(self):
             old_path = self.settings.value("base_path", "", type=str)
             old_line_id = self.settings.value("intranet_line_id", 436, type=int)
-            dlg = SettingsDialog(self.settings, self)
+            runtime_db_path = getattr(self, "runtime_cache_path", "")
+            dlg = SettingsDialog(self.settings, self, runtime_db_path=runtime_db_path)
             if dlg.exec_() == QDialog.Accepted:
                 new_path = self.settings.value("base_path", "", type=str)
                 new_line_id = self.settings.value("intranet_line_id", 436, type=int)
@@ -2355,8 +2357,8 @@ class MainWindowHandlers:
                     last_prog[key] = s.program
                     continue
 
-                changed_cols = {}
-                large_cols = {}
+                changed_cols: dict[str, str] = {}
+                large_cols: dict[str, bool] = {}
                 for name in PARAM_DISPLAY_ORDER:
                     if name == 'Step Speed':
                         prev_speed = prev.values.get('Step Speed')
@@ -2371,8 +2373,6 @@ class MainWindowHandlers:
                             except Exception:
                                 changed = curr_speed != prev_speed
 
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         if not changed:
                             continue
 
@@ -2388,19 +2388,16 @@ class MainWindowHandlers:
                             and abs(prev_speed) > 1e-12
                         ):
                             pct = abs((curr_speed - prev_speed) / prev_speed) * 100.0
-                            large_cols[name] = (pct >= threshold_pct)
+                            if pct >= threshold_pct:
+                                large_cols[name] = True
                         continue
 
                     if name not in PARAM_NAMES:
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         continue
 
                     prev_include = bool(prev.included.get(name, False))
                     curr_include = bool(s.included.get(name, False))
                     if not prev_include and not curr_include:
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         continue
 
                     prev_mode = prev.modes.get(name, 'ABS')
@@ -2412,8 +2409,6 @@ class MainWindowHandlers:
                     mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                     include_changed = curr_include != prev_include
 
-                    changed_cols[name] = ""
-                    large_cols[name] = False
                     if not (value_changed or mode_changed or include_changed):
                         continue
 
@@ -2425,7 +2420,8 @@ class MainWindowHandlers:
                     changed_cols[name] = f"{prev_txt} -> {curr_txt}"
                     if prev_include and curr_include and abs(prev_value) > 1e-12:
                         pct = abs((curr_value - prev_value) / prev_value) * 100.0
-                        large_cols[name] = (pct >= threshold_pct)
+                        if pct >= threshold_pct:
+                            large_cols[name] = True
                 if any(changed_cols.values()):
                     row = {
                         'dt': s.dt,
@@ -2435,10 +2431,11 @@ class MainWindowHandlers:
                         'pin': s.pin,
                         'step': s.step,
                         'cols': changed_cols,
-                        'large': large_cols,
                         'path': s.path,
                         'type': 'change',
                     }
+                    if large_cols:
+                        row['large'] = large_cols
                     events.append(row)
 
                 last_state[key] = s
@@ -2453,17 +2450,24 @@ class MainWindowHandlers:
             self.analysis_events = events
             self.program_events = prog_events
             self._populate_analysis_filters()
+            self._analysis_auto_resize = True
             self._apply_analysis_filters()
             self._populate_program_filters()
             self._apply_program_filters()
 
-            index_snaps: list[IndexSnapshot] = self._fetch_index_snapshots()
-            index_snaps.sort(key=lambda r: r.dt)
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                index_iter = cache.iter_index_snapshots()
+            else:
+                index_snaps: list[IndexSnapshot] = self._fetch_index_snapshots()
+                index_snaps.sort(key=lambda r: r.dt)
+                index_iter = index_snaps
             self.index_snapshots = []
-            index_events = self._build_index_events(index_snaps, threshold_pct)
+            index_events = self._build_index_events(index_iter, threshold_pct)
             self._log(f"[Analysis] Zmiany index: {len(index_events)}")
             self.index_events = index_events
             self._populate_index_filters()
+            self._index_auto_resize = True
             self._apply_index_filters()
             try:
                 self._populate_param_line_filters()
@@ -2616,8 +2620,6 @@ class MainWindowHandlers:
                 rows.append(e)
 
 
-            rows.sort(key=lambda x: (x['dt'], x['machine'], x.get('pin',''), x['step']))
-
             self.analysis_table.setRowCount(len(rows))
             highlight = QBrush(QColor('#fff6bf'))
             big_change = QBrush(QColor('#ffd6d6'))
@@ -2648,7 +2650,9 @@ class MainWindowHandlers:
                 if path_text:
                     path_item.setToolTip(path_text)
                 self.analysis_table.setItem(i, path_col_idx, path_item)
-            self.analysis_table.resizeColumnsToContents()
+            if getattr(self, "_analysis_auto_resize", False):
+                self.analysis_table.resizeColumnsToContents()
+                self._analysis_auto_resize = False
             self.analysis_filtered_rows = rows
 
     def _set_combo_items(self, combo: QComboBox, items: Iterable[str], *, sort_items: bool = True) -> None:
@@ -3874,8 +3878,6 @@ class MainWindowHandlers:
                         continue
                 rows.append(e)
 
-            rows.sort(key=lambda x: (x['dt'], x['machine'], x['table'], x['step']))
-
             self.index_table.setRowCount(len(rows))
             highlight = QBrush(QColor('#fff6bf'))
             big_change = QBrush(QColor('#ffd6d6'))
@@ -3905,7 +3907,9 @@ class MainWindowHandlers:
                 if path_text:
                     path_item.setToolTip(path_text)
                 self.index_table.setItem(i, path_col_idx, path_item)
-            self.index_table.resizeColumnsToContents()
+            if getattr(self, "_index_auto_resize", False):
+                self.index_table.resizeColumnsToContents()
+                self._index_auto_resize = False
             self.index_filtered_rows = rows
 
     def _format_index_value(self, include: bool, value: float, mode: str) -> str:
@@ -4013,7 +4017,7 @@ class MainWindowHandlers:
             events.sort(key=lambda e: (e.get('dt'), e.get('machine'), e.get('pin')))
             return events
 
-    def _build_index_events(self, snaps: list[IndexSnapshot], threshold_pct: float) -> list[dict]:
+    def _build_index_events(self, snaps: Iterable[IndexSnapshot], threshold_pct: float) -> list[dict]:
             events: list[dict] = []
             last_state: dict[tuple[str, str, int], IndexSnapshot] = {}
             last_prog: dict[tuple[str, str, int], str] = {}
@@ -4050,8 +4054,6 @@ class MainWindowHandlers:
                         else:
                             changed = abs(curr_val - prev_val) > 1e-12
 
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         if not changed:
                             continue
 
@@ -4066,8 +4068,6 @@ class MainWindowHandlers:
                     prev_include = bool(prev.included.get(name, False))
                     curr_include = bool(s.included.get(name, False))
                     if not prev_include and not curr_include:
-                        changed_cols[name] = ""
-                        large_cols[name] = False
                         continue
 
                     prev_mode = prev.modes.get(name, 'ABS')
@@ -4079,8 +4079,6 @@ class MainWindowHandlers:
                     mode_changed = (curr_mode or '').upper() != (prev_mode or '').upper()
                     include_changed = curr_include != prev_include
 
-                    changed_cols[name] = ""
-                    large_cols[name] = False
                     if not (value_changed or mode_changed or include_changed):
                         continue
 
@@ -4092,10 +4090,11 @@ class MainWindowHandlers:
                     changed_cols[name] = f"{prev_txt} -> {curr_txt}"
                     if prev_include and curr_include and abs(prev_value) > 1e-12:
                         pct = abs((curr_value - prev_value) / prev_value) * 100.0
-                        large_cols[name] = (pct >= threshold_pct)
+                        if pct >= threshold_pct:
+                            large_cols[name] = True
 
                 if any(changed_cols.values()):
-                    events.append({
+                    row = {
                         'dt': s.dt,
                         'machine': s.machine,
                         'program': s.program,
@@ -4103,10 +4102,12 @@ class MainWindowHandlers:
                         'step': s.step,
                         'pin': '',
                         'cols': changed_cols,
-                        'large': large_cols,
                         'path': s.path,
                         'type': 'index_change',
-                    })
+                    }
+                    if large_cols:
+                        row['large'] = large_cols
+                    events.append(row)
 
                 last_state[key] = s
                 last_prog[key] = s.program
