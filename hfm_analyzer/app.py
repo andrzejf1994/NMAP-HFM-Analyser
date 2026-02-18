@@ -25,10 +25,25 @@ def ensure_base_path(settings: QSettings) -> bool:
         base_path = DEFAULT_PATH_H66_2
 
     if network_path_available(base_path):
+        try:
+            settings.setValue("offline_cache_mode", False)
+        except Exception:
+            pass
         return True
+
+    try:
+        if settings.value("offline_cache_mode", False, type=bool):
+            return True
+    except Exception:
+        pass
 
     dialog = NetworkCheckDialog(settings)
     result = dialog.exec_()
+    try:
+        if settings.value("offline_cache_mode", False, type=bool):
+            return True
+    except Exception:
+        pass
     new_path = settings.value("base_path", "", type=str)
     return result == dialog.Accepted and network_path_available(new_path)
 
@@ -104,7 +119,11 @@ def _load_app_icon() -> QIcon | None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
 
     try:
         QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)

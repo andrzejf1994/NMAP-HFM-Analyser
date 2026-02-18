@@ -157,6 +157,12 @@ class AnalyzeWorker(QThread):
             to_process: list[tuple[FoundFile, float]] = []
             for found_file in self.files:
                 try:
+                    if self.runtime_cache.has_hour_bucket(found_file.machine, found_file.dt):
+                        skipped += 1
+                        continue
+                except Exception:
+                    pass
+                try:
                     mtime = os.path.getmtime(found_file.path)
                 except Exception:
                     mtime = 0.0
@@ -216,6 +222,10 @@ class AnalyzeWorker(QThread):
                                 stored["hairpin"] += self.runtime_cache.insert_hairpin_snapshots(
                                     file_id, found_file.machine, hairpin_recs
                                 )
+                            try:
+                                self.runtime_cache.record_hour_bucket(found_file.machine, found_file.dt)
+                            except Exception:
+                                pass
                         except Exception:
                             logging.getLogger(__name__).exception(
                                 "[AnalyzeWorker] błąd podczas analizy pliku"
@@ -720,6 +730,7 @@ class IntranetWorker(QThread):
         start_dt: datetime,
         end_dt: datetime,
         line_id: int,
+        timeout_sec: float | int = 8,
         excludes: List[str] | None = None,
     ) -> None:
         super().__init__()
@@ -727,6 +738,13 @@ class IntranetWorker(QThread):
         self.start_dt = start_dt
         self.end_dt = end_dt
         self.line_id = line_id
+        try:
+            timeout_val = float(timeout_sec)
+        except Exception:
+            timeout_val = 8.0
+        if timeout_val <= 0:
+            timeout_val = 8.0
+        self.timeout_sec = timeout_val
         self.excludes = set(excludes or [])
 
     def run(self) -> None:  # pragma: no cover - executed in background thread
@@ -758,7 +776,7 @@ class IntranetWorker(QThread):
             import requests
 
             with requests.Session() as session:
-                response = session.post(self.url, data=payload, timeout=8)
+                response = session.post(self.url, data=payload, timeout=self.timeout_sec)
                 if response.status_code == 200:
                     html = response.text
                 self.progress.emit(
@@ -768,7 +786,7 @@ class IntranetWorker(QThread):
             pass
 
         if html is None:
-            with urllib.request.urlopen(request, timeout=8) as resp:  # type: ignore[arg-type]
+            with urllib.request.urlopen(request, timeout=self.timeout_sec) as resp:  # type: ignore[arg-type]
                 html = resp.read().decode("utf-8", errors="ignore")
                 status = getattr(resp, "status", "200 or unknown")
             self.progress.emit(f"[Intranet] HTTP status via urllib: {status}")

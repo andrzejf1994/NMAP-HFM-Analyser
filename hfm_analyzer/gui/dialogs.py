@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QSettings, Qt, QObject, pyqtSignal, QThread
+import os
+import sqlite3
+from datetime import date, datetime, timedelta
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -13,6 +16,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QCheckBox,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -24,6 +28,7 @@ from hfm_analyzer.constants import (
     DEFAULT_PATH_H66_2,
 )
 from hfm_analyzer.utils import network_path_available
+from hfm_analyzer.storage.runtime_sqlite_cache import RuntimeSQLiteCache
 from hfm_analyzer.gui.utils import _maybe_offer_drive_mapping
 
 
@@ -83,6 +88,11 @@ class SettingsDialog(QDialog):
         self.intra_days_back_spin.setRange(0, 30)
         self.intra_days_back_spin.setValue(self.settings.value("intranet_days_back", 1, type=int))
 
+        self.intra_timeout_spin = QSpinBox()
+        self.intra_timeout_spin.setRange(1, 3600)
+        self.intra_timeout_spin.setSuffix(" s")
+        self.intra_timeout_spin.setValue(self.settings.value("intranet_timeout_per_day_sec", 8, type=int))
+
         db_path = (runtime_db_path or "").strip()
         self.db_path_label = QLabel(db_path or "(brak)")
         self.db_path_label.setWordWrap(True)
@@ -90,6 +100,19 @@ class SettingsDialog(QDialog):
             self.db_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         except Exception:
             pass
+
+        self.persistent_check = QCheckBox("Używaj trwałej bazy danych (nieusuwanej)")
+        self.persistent_check.setChecked(self.settings.value("cache_persistent", False, type=bool))
+        self.cache_path_edit = QLineEdit(self.settings.value("cache_path", "", type=str))
+        self.cache_path_edit.setPlaceholderText("Wybierz lokalizację pliku .sqlite")
+        self.cache_browse_btn = QPushButton("Wybierz...")
+        self.cache_browse_btn.clicked.connect(self._browse_cache_path)
+        self.persistent_check.toggled.connect(self._on_persistent_toggled)
+        self.cache_keep_days_spin = QSpinBox()
+        self.cache_keep_days_spin.setRange(0, 3650)
+        self.cache_keep_days_spin.setValue(self.settings.value("cache_keep_days", 30, type=int))
+        self.cache_clear_btn = QPushButton("Czyść bazę")
+        self.cache_clear_btn.clicked.connect(self._clear_cache)
 
         browse_btn = QPushButton("Przeglądaj")
         browse_btn.clicked.connect(self._browse)
@@ -111,8 +134,18 @@ class SettingsDialog(QDialog):
         form.addRow("Próg dużej zmiany (%):", self.threshold_spin)
         form.addRow("ID linii (intranet):", self.line_id_spin)
         form.addRow("Dni wstecz (Intranet):", self.intra_days_back_spin)
+        form.addRow("Timeout na dzień (Intranet):", self.intra_timeout_spin)
         form.addRow("Wyklucz maszyny (SAP):", self.intra_excl_edit)
         form.addRow("Baza danych (SQLite):", self.db_path_label)
+        form.addRow(self.persistent_check)
+        cache_row = QHBoxLayout()
+        cache_row.addWidget(self.cache_path_edit)
+        cache_row.addWidget(self.cache_browse_btn)
+        form.addRow("Lokalizacja bazy trwałej:", cache_row)
+        clear_row = QHBoxLayout()
+        clear_row.addWidget(self.cache_keep_days_spin)
+        clear_row.addWidget(self.cache_clear_btn)
+        form.addRow("Pozostaw dane (dni):", clear_row)
 
         presets = QHBoxLayout()
         presets.addWidget(preset_evo)
@@ -134,6 +167,7 @@ class SettingsDialog(QDialog):
             QPushButton { padding:6px 10px; }
             """
         )
+        self._on_persistent_toggled(self.persistent_check.isChecked())
 
     def _on_path_text_changed(self, _: str) -> None:
         if not getattr(self, "_block_path_signal", False):
@@ -161,6 +195,55 @@ class SettingsDialog(QDialog):
         if new_path:
             self._apply_path(new_path)
 
+    def _browse_cache_path(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Wybierz lokalizację bazy SQLite",
+            self.cache_path_edit.text().strip() or "hfm_analyzer_cache.sqlite",
+            "SQLite (*.sqlite);;Wszystkie pliki (*.*)",
+        )
+        if path:
+            self.cache_path_edit.setText(path)
+
+    def _on_persistent_toggled(self, checked: bool) -> None:
+        self.cache_path_edit.setEnabled(checked)
+        self.cache_browse_btn.setEnabled(checked)
+        self.cache_keep_days_spin.setEnabled(checked)
+        self.cache_clear_btn.setEnabled(checked)
+
+    def _clear_cache(self) -> None:
+        if not self.persistent_check.isChecked():
+            QMessageBox.information(
+                self,
+                "Brak trwałej bazy",
+                "Włącz trwałą bazę danych, aby móc czyścić zapisane dane.",
+            )
+            return
+        path = self.cache_path_edit.text().strip()
+        if not path:
+            QMessageBox.warning(self, "Brak ścieżki", "Podaj lokalizację bazy SQLite.")
+            return
+        keep_days = int(self.cache_keep_days_spin.value())
+        cutoff_date = date.today() - timedelta(days=keep_days)
+        cutoff_dt = datetime.combine(cutoff_date, datetime.min.time())
+        msg = (
+            "Zostaną usunięte dane starsze niż: "
+            f"{cutoff_date.isoformat()} (dziś - {keep_days} dni).\n"
+            "Czy na pewno kontynuować?"
+        )
+        if QMessageBox.question(self, "Potwierdź czyszczenie", msg, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            results = RuntimeSQLiteCache.purge_older_than(path, cutoff_dt)
+            summary = ", ".join(
+                f"{key}={value}" for key, value in results.items() if value
+            )
+            if not summary:
+                summary = "Brak danych do usunięcia."
+            QMessageBox.information(self, "Czyszczenie zakończone", summary)
+        except Exception as exc:
+            QMessageBox.critical(self, "Błąd czyszczenia", str(exc))
+
     def _accept(self) -> None:
         current = self.path_edit.text().strip()
         if current and current != self._last_checked_path:
@@ -180,6 +263,19 @@ class SettingsDialog(QDialog):
         self.settings.setValue("intranet_line_id", int(self.line_id_spin.value()))
         self.settings.setValue("intranet_exclude_machines", self.intra_excl_edit.text().strip())
         self.settings.setValue("intranet_days_back", int(self.intra_days_back_spin.value()))
+        self.settings.setValue("intranet_timeout_per_day_sec", int(self.intra_timeout_spin.value()))
+        persistent = bool(self.persistent_check.isChecked())
+        cache_path = self.cache_path_edit.text().strip()
+        if persistent and not cache_path:
+            QMessageBox.warning(
+                self,
+                "Brak ścieżki",
+                "Podaj lokalizację pliku bazy SQLite lub wyłącz tryb trwałej bazy.",
+            )
+            return
+        self.settings.setValue("cache_persistent", persistent)
+        self.settings.setValue("cache_path", cache_path)
+        self.settings.setValue("cache_keep_days", int(self.cache_keep_days_spin.value()))
         self.accept()
 
 class NetworkCheckDialog(QDialog):
@@ -214,6 +310,10 @@ class NetworkCheckDialog(QDialog):
         self.choose_btn = QPushButton("Wskaż katalog")
         self.choose_btn.clicked.connect(self._choose_path)
 
+        self.offline_btn = QPushButton("Tryb offline (baza)")
+        self.offline_btn.clicked.connect(self._use_offline_cache)
+        self.offline_btn.setEnabled(self._offline_cache_available())
+
         self.preset_evo = QPushButton("Ustaw EVO")
         self.preset_evo.clicked.connect(lambda: self._set_path(DEFAULT_PATH_EVO, "BSG EVO"))
         self.preset_h66 = QPushButton("Ustaw H66 2")
@@ -227,6 +327,7 @@ class NetworkCheckDialog(QDialog):
 
         row2 = QHBoxLayout()
         row2.addWidget(self.choose_btn)
+        row2.addWidget(self.offline_btn)
 
         row3 = QHBoxLayout()
         row3.addWidget(self.preset_evo)
@@ -265,6 +366,10 @@ class NetworkCheckDialog(QDialog):
 
     def _set_path(self, path: str, display_name: str | None = None) -> None:
         mapped = _maybe_offer_drive_mapping(self, path, fast=True).strip()
+        try:
+            self.settings.setValue("offline_cache_mode", False)
+        except Exception:
+            pass
         self.settings.setValue("base_path", mapped)
         if mapped:
             self._current_display_name = (display_name or "").strip()
@@ -281,6 +386,7 @@ class NetworkCheckDialog(QDialog):
         for btn in (
             self.retry_btn,
             self.choose_btn,
+            self.offline_btn,
             self.preset_evo,
             self.preset_h66,
         ):
@@ -317,6 +423,10 @@ class NetworkCheckDialog(QDialog):
         self._set_controls_enabled(True)
         self.status_label.setText("")
         if available:
+            try:
+                self.settings.setValue("offline_cache_mode", False)
+            except Exception:
+                pass
             self.accept()
         else:
             QMessageBox.warning(
@@ -324,5 +434,49 @@ class NetworkCheckDialog(QDialog):
                 "Nadal brak dostępu",
                 "Ścieżka nadal jest niedostępna. Sprawdź połączenie lub wybierz inną ścieżkę.",
             )
+
+    def _offline_cache_available(self) -> bool:
+        try:
+            persistent = bool(self.settings.value("cache_persistent", False, type=bool))
+        except Exception:
+            persistent = False
+        if not persistent:
+            return False
+        path = self.settings.value("cache_path", "", type=str)
+        path = (path or "").strip()
+        if not path or not os.path.exists(path):
+            return False
+        try:
+            conn = sqlite3.connect(path)
+            cur = conn.cursor()
+            for table in (
+                "param_snapshots",
+                "index_snapshots",
+                "grip_snapshots",
+                "nest_snapshots",
+                "hairpin_snapshots",
+            ):
+                row = cur.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                if row:
+                    conn.close()
+                    return True
+            conn.close()
+        except Exception:
+            return False
+        return False
+
+    def _use_offline_cache(self) -> None:
+        if not self._offline_cache_available():
+            QMessageBox.warning(
+                self,
+                "Brak danych",
+                "Trwała baza danych nie jest dostępna lub nie zawiera danych.",
+            )
+            return
+        try:
+            self.settings.setValue("offline_cache_mode", True)
+        except Exception:
+            pass
+        self.accept()
 
 __all__ = ['SettingsDialog', 'NetworkCheckDialog']

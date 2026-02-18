@@ -9,13 +9,14 @@ import math
 import os
 import re
 import string
+import tempfile
 import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Iterable, List
 
-from PyQt5.QtCore import QDateTime, QTime, Qt, QPointF, QRectF, QSize
+from PyQt5.QtCore import QDateTime, QTime, Qt, QPointF, QRectF, QSize, QStandardPaths
 from PyQt5.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -124,26 +125,60 @@ class MainWindowHandlers:
         self,
         *,
         machine: str | None = None,
+        machines: list[str] | None = None,
         pin: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[ParamSnapshot]:
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                return cache.fetch_param_snapshots(machine=machine, pin=pin, step=step, dt=dt)
+                if start_dt is None and end_dt is None:
+                    start_dt, end_dt, default_machines = self._analysis_cache_filters()
+                else:
+                    default_machines = None
+                if machines is None and machine is None:
+                    machines = default_machines
+                return cache.fetch_param_snapshots(
+                    machine=machine,
+                    machines=machines,
+                    pin=pin,
+                    step=step,
+                    dt=dt,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             return list(getattr(self, "param_snapshots", []))
 
     def _fetch_index_snapshots(
         self,
         *,
         machine: str | None = None,
+        machines: list[str] | None = None,
         table: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[IndexSnapshot]:
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                return cache.fetch_index_snapshots_list(machine=machine, table=table, step=step, dt=dt)
+                if start_dt is None and end_dt is None:
+                    start_dt, end_dt, default_machines = self._analysis_cache_filters()
+                else:
+                    default_machines = None
+                if machines is None and machine is None:
+                    machines = default_machines
+                return cache.fetch_index_snapshots_list(
+                    machine=machine,
+                    machines=machines,
+                    table=table,
+                    step=step,
+                    dt=dt,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             return list(getattr(self, "index_snapshots", []))
 
     def _fetch_struct_snapshots(
@@ -151,18 +186,45 @@ class MainWindowHandlers:
         prefix: str,
         *,
         machine: str | None = None,
+        machines: list[str] | None = None,
         pin: str | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[GripSnapshot | NestSnapshot | HairpinSnapshot]:
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                return cache.fetch_struct_snapshots(prefix, machine=machine, pin=pin, dt=dt)
+                if start_dt is None and end_dt is None:
+                    start_dt, end_dt, default_machines = self._analysis_cache_filters()
+                else:
+                    default_machines = None
+                if machines is None and machine is None:
+                    machines = default_machines
+                return cache.fetch_struct_snapshots(
+                    prefix,
+                    machine=machine,
+                    machines=machines,
+                    pin=pin,
+                    dt=dt,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             attr = {
                 "grip": "hp_grip_snapshots",
                 "nest": "nest_snapshots",
                 "hairpin": "hairpin_snapshots",
             }.get(prefix, "")
             return list(getattr(self, attr, [])) if attr else []
+
+    def _analysis_cache_filters(self) -> tuple[datetime | None, datetime | None, list[str] | None]:
+            start_dt = getattr(self, "_analysis_cache_start", None)
+            end_dt = getattr(self, "_analysis_cache_end", None)
+            machines = getattr(self, "_analysis_cache_machines", None)
+            if machines:
+                machines = [m for m in machines if m]
+            else:
+                machines = None
+            return start_dt, end_dt, machines
 
     def _apply_styles(self):
             self.setStyleSheet(
@@ -231,14 +293,36 @@ class MainWindowHandlers:
                 """
             )
 
-    def _log(self, msg: str):
+    def _format_log_message(self, msg: str) -> str:
+            try:
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return msg
+            return f"{ts} {msg}"
+
+    def _append_log(self, msg: str) -> None:
             try:
                 if hasattr(self, 'logs_tab') and self.logs_tab is not None:
-                    self.logs_tab.append(msg)
+                    self.logs_tab.append(self._format_log_message(msg))
             except Exception:
                 pass
+
+    def _log(self, msg: str):
+            self._append_log(msg)
             try:
                 logging.getLogger("backup_analyzer").info(msg)
+            except Exception:
+                pass
+
+    def _is_offline_cache_mode(self) -> bool:
+            try:
+                return bool(self.settings.value("offline_cache_mode", False, type=bool))
+            except Exception:
+                return False
+
+    def _set_offline_cache_mode(self, enabled: bool) -> None:
+            try:
+                self.settings.setValue("offline_cache_mode", bool(enabled))
             except Exception:
                 pass
 
@@ -246,6 +330,9 @@ class MainWindowHandlers:
             base_path = self.settings.value("base_path", "", type=str)
             display_name = self.settings.value("base_path_display_name", "", type=str)
             display_name = display_name.strip()
+            if self._is_offline_cache_mode():
+                self.base_path_label.setText("Linia: <b>Tryb offline (baza)</b>")
+                return
             if display_name:
                 disp = display_name
             elif base_path:
@@ -258,6 +345,57 @@ class MainWindowHandlers:
     def _get_base_path(self) -> str:
             return self.settings.value("base_path", "", type=str)
 
+    def _default_persistent_cache_path(self) -> str:
+            base = ""
+            try:
+                base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
+            except Exception:
+                base = ""
+            if not base:
+                try:
+                    base = os.path.join(os.path.expanduser("~"), "HFM Analyzer")
+                except Exception:
+                    base = ""
+            if base:
+                try:
+                    os.makedirs(base, exist_ok=True)
+                except Exception:
+                    pass
+                return os.path.join(base, "hfm_analyzer_cache.sqlite")
+            return os.path.join(tempfile.gettempdir(), "hfm_analyzer_cache.sqlite")
+
+    def _create_runtime_cache(self) -> RuntimeSQLiteCache | None:
+            try:
+                persistent = bool(self.settings.value("cache_persistent", False, type=bool))
+            except Exception:
+                persistent = False
+            path: str | None = None
+            if persistent:
+                try:
+                    path = self.settings.value("cache_path", "", type=str)
+                except Exception:
+                    path = ""
+                path = (path or "").strip()
+                if not path:
+                    path = self._default_persistent_cache_path()
+                    try:
+                        self.settings.setValue("cache_path", path)
+                    except Exception:
+                        pass
+                try:
+                    dir_path = os.path.dirname(path)
+                    if dir_path:
+                        os.makedirs(dir_path, exist_ok=True)
+                except Exception:
+                    pass
+            try:
+                cache = RuntimeSQLiteCache(path=path, persistent=persistent)
+                self.runtime_cache_path = cache.path
+                return cache
+            except Exception:
+                self.runtime_cache_path = ""
+                return None
+
     def _select_all(self):
             for i in range(self.machine_list.count()):
                 self.machine_list.item(i).setSelected(True)
@@ -266,10 +404,117 @@ class MainWindowHandlers:
             for i in range(self.machine_list.count()):
                 self.machine_list.item(i).setSelected(False)
 
+    def _remember_default_date_bounds(self) -> None:
+            if not hasattr(self, "start_datetime") or not hasattr(self, "end_datetime"):
+                return
+            if not hasattr(self, "_default_start_min"):
+                self._default_start_min = self.start_datetime.minimumDateTime()
+                self._default_start_max = self.start_datetime.maximumDateTime()
+                self._default_end_min = self.end_datetime.minimumDateTime()
+                self._default_end_max = self.end_datetime.maximumDateTime()
+
+    def _reset_date_bounds(self) -> None:
+            if not hasattr(self, "start_datetime") or not hasattr(self, "end_datetime"):
+                return
+            self._remember_default_date_bounds()
+            try:
+                self.start_datetime.setMinimumDateTime(self._default_start_min)
+                self.start_datetime.setMaximumDateTime(self._default_start_max)
+                self.end_datetime.setMinimumDateTime(self._default_end_min)
+                self.end_datetime.setMaximumDateTime(self._default_end_max)
+            except Exception:
+                pass
+
+    def _apply_cache_date_bounds(self, min_dt: datetime, max_dt: datetime) -> None:
+            if not hasattr(self, "start_datetime") or not hasattr(self, "end_datetime"):
+                return
+            self._remember_default_date_bounds()
+            try:
+                qmin = QDateTime(min_dt)
+                qmax = QDateTime(max_dt)
+            except Exception:
+                return
+            if qmax < qmin:
+                qmax = qmin
+            try:
+                self.start_datetime.setMinimumDateTime(qmin)
+                self.start_datetime.setMaximumDateTime(qmax)
+                self.end_datetime.setMinimumDateTime(qmin)
+                self.end_datetime.setMaximumDateTime(qmax)
+            except Exception:
+                return
+            try:
+                start = self.start_datetime.dateTime()
+                end = self.end_datetime.dateTime()
+                if start < qmin:
+                    start = qmin
+                if start > qmax:
+                    start = qmax
+                if end < qmin:
+                    end = qmin
+                if end > qmax:
+                    end = qmax
+                if start > end:
+                    start = qmin
+                    end = qmax
+                self.start_datetime.setDateTime(start)
+                self.end_datetime.setDateTime(end)
+            except Exception:
+                pass
+
+    def _populate_machines_from_cache(self) -> bool:
+            cache = getattr(self, "runtime_cache", None)
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache):
+                cache = self._create_runtime_cache()
+                self.runtime_cache = cache
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache) or not cache.persistent:
+                self.machine_list.addItem("(brak trwałej bazy)")
+                self.scan_btn.setEnabled(False)
+                return False
+            try:
+                min_dt, max_dt = cache.fetch_time_bounds()
+            except Exception:
+                min_dt, max_dt = None, None
+            if min_dt is None or max_dt is None:
+                self.machine_list.addItem("(brak danych w bazie)")
+                self.scan_btn.setEnabled(False)
+                return False
+            try:
+                machines = cache.fetch_machine_names()
+            except Exception:
+                machines = []
+            if not machines:
+                self.machine_list.addItem("(brak maszyn w bazie)")
+                self.scan_btn.setEnabled(False)
+                return False
+            for name in machines:
+                self.machine_list.addItem(QListWidgetItem(name))
+            self.scan_btn.setEnabled(True)
+            try:
+                self._select_all()
+            except Exception:
+                pass
+            try:
+                self._apply_cache_date_bounds(min_dt, max_dt)
+            except Exception:
+                pass
+            return True
+
     def _populate_machines(self):
             base_path = self._get_base_path()
             self.machine_list.clear()
             self._all_machines.clear()
+            if base_path and network_path_available(base_path):
+                if self._is_offline_cache_mode():
+                    self._set_offline_cache_mode(False)
+                    try:
+                        self._refresh_base_path_label()
+                    except Exception:
+                        pass
+                self._reset_date_bounds()
+            elif self._is_offline_cache_mode():
+                if self._populate_machines_from_cache():
+                    return
             if not base_path or not network_path_available(base_path):
                 self.machine_list.addItem("(brak dostępnych katalogów)")
                 self.scan_btn.setEnabled(False)
@@ -297,6 +542,7 @@ class MainWindowHandlers:
             new_path = QFileDialog.getExistingDirectory(self, "Wskaż katalog bazowy z backupami")
             if new_path:
                 self.settings.setValue("base_path", new_path)
+                self._set_offline_cache_mode(False)
                 if new_path != old_path:
                     self._reset_results_state(clear_found_files=True)
                 self._refresh_base_path_label()
@@ -305,18 +551,39 @@ class MainWindowHandlers:
     def _open_settings(self):
             old_path = self.settings.value("base_path", "", type=str)
             old_line_id = self.settings.value("intranet_line_id", 436, type=int)
+            old_cache_persistent = self.settings.value("cache_persistent", False, type=bool)
+            old_cache_path = self.settings.value("cache_path", "", type=str)
             runtime_db_path = getattr(self, "runtime_cache_path", "")
             dlg = SettingsDialog(self.settings, self, runtime_db_path=runtime_db_path)
             if dlg.exec_() == QDialog.Accepted:
                 new_path = self.settings.value("base_path", "", type=str)
                 new_line_id = self.settings.value("intranet_line_id", 436, type=int)
+                new_cache_persistent = self.settings.value("cache_persistent", False, type=bool)
+                new_cache_path = self.settings.value("cache_path", "", type=str)
                 if new_path != old_path or new_line_id != old_line_id:
                     self._reset_results_state(clear_found_files=True)
+                if (
+                    new_cache_persistent != old_cache_persistent
+                    or (new_cache_path or "").strip() != (old_cache_path or "").strip()
+                ):
+                    if not self._is_worker_running('a_worker'):
+                        try:
+                            cache = getattr(self, "runtime_cache", None)
+                            if cache is not None:
+                                cache.close()
+                        except Exception:
+                            pass
+                        self.runtime_cache = self._create_runtime_cache()
+                if not new_cache_persistent:
+                    self._set_offline_cache_mode(False)
                 self._refresh_base_path_label()
                 self._populate_machines()
 
     def _start_scan(self):
             base_path = self._get_base_path()
+            if self._is_offline_cache_mode():
+                self._start_cache_only_analysis()
+                return
             if not network_path_available(base_path):
                 QMessageBox.critical(self, "Błąd", "Katalog bazowy jest niedostępny.")
                 return
@@ -346,6 +613,71 @@ class MainWindowHandlers:
             self.worker.error.connect(self._on_error)
             self.worker.start()
 
+    def _start_cache_only_analysis(self):
+            cache = getattr(self, "runtime_cache", None)
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache):
+                cache = self._create_runtime_cache()
+                self.runtime_cache = cache
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache) or not cache.persistent:
+                QMessageBox.warning(
+                    self,
+                    "Brak bazy",
+                    "Brak dostępu do trwałej bazy danych. Wyłącz tryb offline lub wskaż bazę w ustawieniach.",
+                )
+                return
+            selected = [it.text() for it in self.machine_list.selectedItems() if not it.text().startswith("(")]
+            if not selected:
+                QMessageBox.warning(self, "Wybór maszyn", "Zaznacz co najmniej jedną maszynę.")
+                return
+            start_dt = self.start_datetime.dateTime().toPyDateTime()
+            end_dt = self.end_datetime.dateTime().toPyDateTime()
+            if start_dt > end_dt:
+                QMessageBox.warning(self, "Zakres dat", "Data początkowa jest późniejsza niż data końcowa.")
+                return
+            self._analysis_cache_start = start_dt
+            self._analysis_cache_end = end_dt
+            self._analysis_cache_machines = sorted({m for m in selected if m})
+
+            self._reset_results_state(clear_found_files=True)
+            self.progress.setRange(0, 0)
+            self.progress.setVisible(True)
+            self.status_label.setText("Analiza z bazy...")
+            self.analysis_run_btn.setEnabled(False)
+            self._set_task_active('analysis', True)
+
+            try:
+                self.analysis_started_at = datetime.now()
+                self._log(
+                    f"[Analysis] START {self.analysis_started_at.strftime('%Y-%m-%d %H:%M:%S')} | cache-only"
+                )
+            except Exception:
+                pass
+            try:
+                self.found_files = cache.fetch_files(
+                    machines=self._analysis_cache_machines,
+                    start_dt=self._analysis_cache_start,
+                    end_dt=self._analysis_cache_end,
+                )
+            except Exception:
+                self.found_files = []
+            try:
+                self._render_summary()
+                self._populate_trend_filters()
+                self._apply_trend_filters()
+                self.analysis_run_btn.setEnabled(bool(self.found_files))
+            except Exception:
+                pass
+            try:
+                self._start_intranet_fetch(show_progress=False)
+            except Exception:
+                pass
+            records = {}
+            try:
+                records = {"counts": cache.stats(), "skipped": 0}
+            except Exception:
+                records = {"counts": {}, "skipped": 0}
+            self._on_analysis_finished(records)
+
     def _on_progress(self, msg: str):
 
             try:
@@ -369,7 +701,7 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                self.logs_tab.append(msg)
+                self._append_log(msg)
             except Exception:
                 pass
 
@@ -378,7 +710,7 @@ class MainWindowHandlers:
             self.status_label.setText("Błąd")
             self.scan_btn.setEnabled(True)
             QMessageBox.critical(self, "Błąd", err)
-            self.logs_tab.append(f"Błąd: {err}")
+            self._append_log(f"Błąd: {err}")
 
     def _on_finished(self, found: list):
             self.progress.setVisible(False)
@@ -1064,6 +1396,71 @@ class MainWindowHandlers:
 
             return rollup
 
+    def _build_intranet_series(self, rows: list[dict], start_dt: datetime, end_dt: datetime) -> dict[str, int]:
+            fine_grain = (end_dt - start_dt).total_seconds() <= 48 * 3600
+            series: dict[str, int] = {}
+            for rec in rows:
+                dt = rec.get('data')
+                if not isinstance(dt, datetime):
+                    continue
+                if dt < start_dt or dt > end_dt:
+                    continue
+                judge = str(rec.get('judge', '') or '').strip().upper()
+                if judge != 'NOK':
+                    continue
+                bucket = dt.strftime("%Y-%m-%d %H:00") if fine_grain else dt.date().isoformat()
+                series[bucket] = series.get(bucket, 0) + 1
+            return series
+
+    def _load_intranet_from_cache(
+        self,
+        start_dt: datetime,
+        end_dt: datetime,
+        line_id: int,
+        show_progress: bool = True,
+    ) -> bool:
+            cache = getattr(self, "runtime_cache", None)
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache):
+                cache = self._create_runtime_cache()
+                self.runtime_cache = cache
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache) or not cache.persistent:
+                return False
+            try:
+                rows_all = cache.fetch_intranet_rows(
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    line_id=line_id,
+                )
+            except Exception:
+                rows_all = []
+            if not rows_all and line_id:
+                try:
+                    rows_all = cache.fetch_intranet_rows(
+                        start_dt=start_dt,
+                        end_dt=end_dt,
+                        line_id=None,
+                    )
+                except Exception:
+                    rows_all = []
+            if not rows_all:
+                return False
+            rows_nok = [r for r in rows_all if str(r.get('judge', '') or '').strip().upper() == 'NOK']
+            series = self._build_intranet_series(rows_all, start_dt, end_dt)
+            if show_progress:
+                try:
+                    self.progress.setRange(0, 0)
+                    self.progress.setVisible(True)
+                    self.status_label.setText("Intranet: dane z bazy...")
+                except Exception:
+                    pass
+            data = {
+                "series": series,
+                "rows": rows_nok,
+                "rows_all": rows_all,
+            }
+            self._on_intranet_ready(data)
+            return True
+
     def _start_intranet_fetch(self, show_progress: bool = True):
 
             try:
@@ -1121,6 +1518,32 @@ class MainWindowHandlers:
                     days_back = 0
                 fetch_start = start_dt - timedelta(days=days_back)
                 self._log(f"[Intranet] Fetch start: {fetch_start} -> {end_dt} (requested {start_dt}->{end_dt}, days_back={days_back}), line={line_id}")
+                try:
+                    per_day_timeout = int(self.settings.value("intranet_timeout_per_day_sec", 8, type=int))
+                except Exception:
+                    per_day_timeout = 8
+                if per_day_timeout < 1:
+                    per_day_timeout = 1
+                try:
+                    days_count = (end_dt.date() - fetch_start.date()).days + 1
+                except Exception:
+                    days_count = 1
+                if days_count < 1:
+                    days_count = 1
+                total_timeout = per_day_timeout * days_count
+                self._log(
+                    f"[Intranet] Timeout: {per_day_timeout}s/dzien x {days_count} dni = {total_timeout}s"
+                )
+                if self._is_offline_cache_mode():
+                    self._log("[Intranet] Offline cache mode: using cached data")
+                    if self._load_intranet_from_cache(fetch_start, end_dt, int(line_id), show_progress):
+                        return
+                    self._log("[Intranet] Cache brak danych w zakresie")
+                    try:
+                        self._set_task_active('intranet', False)
+                    except Exception:
+                        pass
+                    return
 
                 if show_progress:
                     try:
@@ -1133,7 +1556,14 @@ class MainWindowHandlers:
                 if not excl_str:
                     excl_str = DEFAULT_INTRANET_EXCLUDES
                 excludes = [s.strip() for s in excl_str.split(',') if s.strip()]
-                self.intra_worker = IntranetWorker(url, fetch_start, end_dt, int(line_id), excludes=excludes)
+                self.intra_worker = IntranetWorker(
+                    url,
+                    fetch_start,
+                    end_dt,
+                    int(line_id),
+                    timeout_sec=total_timeout,
+                    excludes=excludes,
+                )
                 self.intra_worker.progress.connect(self._on_progress)
                 self.intra_worker.finished.connect(self._on_intranet_ready)
                 self.intra_worker.error.connect(self._on_intranet_error)
@@ -1190,6 +1620,19 @@ class MainWindowHandlers:
                 all_rows = data.get('rows_all', []) if isinstance(data, dict) else []
                 try:
                     self._log(f"[Intranet] rows_all={len(all_rows)} NOK={len(rows)}")
+                except Exception:
+                    pass
+                try:
+                    cache = getattr(self, "runtime_cache", None)
+                    if isinstance(cache, RuntimeSQLiteCache) and cache.persistent and all_rows:
+                        try:
+                            line_id = int(self.settings.value("intranet_line_id", 436, type=int))
+                        except Exception:
+                            line_id = 0
+                        inserted = cache.insert_intranet_rows(all_rows, line_id=line_id)
+                        self._log(
+                            f"[Intranet] Cache zapis: +{inserted}/{len(all_rows)}"
+                        )
                 except Exception:
                     pass
                 def _find_source(sn_rows: list):
@@ -1614,7 +2057,27 @@ class MainWindowHandlers:
             self.intranet_filtered_rows = filtered
 
     def _on_intranet_error(self, err: str):
-            self._log(f"[Intranet] Błąd pobierania: {err}. Pomijam overlay.")
+            self._log(f"[Intranet] Błąd pobierania: {err}. Próba z cache.")
+            try:
+                start_dt = self.start_datetime.dateTime().toPyDateTime()
+                end_dt = self.end_datetime.dateTime().toPyDateTime()
+                line_id = self.settings.value("intranet_line_id", 436, type=int)
+                try:
+                    days_back = int(self.settings.value("intranet_days_back", 1, type=int))
+                except Exception:
+                    days_back = 1
+                if days_back < 0:
+                    days_back = 0
+                fetch_start = start_dt - timedelta(days=days_back)
+            except Exception:
+                start_dt = None
+                end_dt = None
+                line_id = 0
+                fetch_start = None
+            if fetch_start and end_dt:
+                if self._load_intranet_from_cache(fetch_start, end_dt, int(line_id), show_progress=False):
+                    return
+            self._log("[Intranet] Cache brak danych, pomijam overlay.")
             analysis_running = self._is_worker_running('a_worker')
             worker_running = self._is_worker_running('worker')
             self._set_task_active('intranet', False)
@@ -2095,6 +2558,17 @@ class MainWindowHandlers:
             if not analysis_files:
                 QMessageBox.information(self, "Brak danych", "Brak plików do analizy.")
                 return
+            try:
+                dts = [f.dt for f in analysis_files if getattr(f, "dt", None) is not None]
+                self._analysis_cache_start = min(dts) if dts else None
+                self._analysis_cache_end = max(dts) if dts else None
+                self._analysis_cache_machines = sorted(
+                    {f.machine for f in analysis_files if getattr(f, "machine", "")}
+                )
+            except Exception:
+                self._analysis_cache_start = None
+                self._analysis_cache_end = None
+                self._analysis_cache_machines = None
             self._reset_results_state(clear_found_files=False)
             self.progress.setRange(0, 0)
             self.progress.setVisible(True)
@@ -2112,8 +2586,9 @@ class MainWindowHandlers:
                 cache = getattr(self, "runtime_cache", None)
                 if cache is not None:
                     cache.close()
-                self.runtime_cache = RuntimeSQLiteCache()
-                self.runtime_cache_path = self.runtime_cache.path
+                self.runtime_cache = self._create_runtime_cache()
+                if self.runtime_cache is None:
+                    raise RuntimeError("Brak dostępu do pliku bazy danych.")
             except Exception as exc:
                 self.runtime_cache = None
                 self.runtime_cache_path = ""
@@ -2284,7 +2759,12 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                grip_snaps = self._fetch_struct_snapshots("grip")
+                grip_snaps = self._fetch_struct_snapshots(
+                    "grip",
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
                 grip_snaps.sort(key=lambda r: r.dt)
                 self.hp_grip_snapshots = []
                 self.hp_grip_events = self._build_struct_change_events(grip_snaps)
@@ -2294,7 +2774,12 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                nest_snaps = self._fetch_struct_snapshots("nest")
+                nest_snaps = self._fetch_struct_snapshots(
+                    "nest",
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
                 nest_snaps.sort(key=lambda r: r.dt)
                 self.nest_snapshots = []
                 self.nest_events = self._build_struct_change_events(nest_snaps)
@@ -2304,7 +2789,12 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                hairpin_snaps = self._fetch_struct_snapshots("hairpin")
+                hairpin_snaps = self._fetch_struct_snapshots(
+                    "hairpin",
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
                 hairpin_snaps.sort(key=lambda r: r.dt)
                 self.hairpin_snapshots = []
                 self.hairpin_events = self._build_struct_change_events(hairpin_snaps)
@@ -2323,9 +2813,15 @@ class MainWindowHandlers:
                 threshold_pct = float(self.settings.value("large_change_threshold_pct", 10, type=int))
             except Exception:
                 threshold_pct = 10.0
+            start_dt, end_dt, machines_filter = self._analysis_cache_filters()
             param_iter = None
             if isinstance(cache, RuntimeSQLiteCache):
-                param_iter = cache.iter_param_snapshots(order_by_ts=True)
+                param_iter = cache.iter_param_snapshots(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    order_by_ts=True,
+                )
             else:
                 param_iter = []
             for s in param_iter:
@@ -2457,7 +2953,11 @@ class MainWindowHandlers:
 
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                index_iter = cache.iter_index_snapshots()
+                index_iter = cache.iter_index_snapshots(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 index_snaps: list[IndexSnapshot] = self._fetch_index_snapshots()
                 index_snaps.sort(key=lambda r: r.dt)
@@ -2485,11 +2985,6 @@ class MainWindowHandlers:
                 pass
             try:
                 self._fill_change_trees()
-            except Exception:
-                pass
-            try:
-                self._populate_trend_filters()
-                self._apply_trend_filters()
             except Exception:
                 pass
             try:
@@ -2685,7 +3180,12 @@ class MainWindowHandlers:
                 return
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                hierarchy = cache.fetch_param_line_hierarchy()
+                start_dt, end_dt, machines_filter = self._analysis_cache_filters()
+                hierarchy = cache.fetch_param_line_hierarchy(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 snaps = getattr(self, 'param_snapshots', [])
                 hierarchy: dict[str, dict[str, set[str]]] = {}
@@ -3267,7 +3767,12 @@ class MainWindowHandlers:
                 return
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                groups: dict[str, list[datetime]] = cache.fetch_param_card_groups()
+                start_dt, end_dt, machines_filter = self._analysis_cache_filters()
+                groups: dict[str, list[datetime]] = cache.fetch_param_card_groups(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 snaps = getattr(self, 'param_snapshots', [])
                 groups = {}
@@ -3643,7 +4148,12 @@ class MainWindowHandlers:
                 return
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                hierarchy = cache.fetch_index_line_hierarchy()
+                start_dt, end_dt, machines_filter = self._analysis_cache_filters()
+                hierarchy = cache.fetch_index_line_hierarchy(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 snaps = getattr(self, 'index_snapshots', [])
                 hierarchy: dict[str, dict[str, set[str]]] = {}
@@ -4768,6 +5278,182 @@ class MainWindowHandlers:
                 self.program_table.setItem(i, 3, QTableWidgetItem(f"{e.get('old_program','')} -> {e.get('new_program','')}"))
             self.program_table.resizeColumnsToContents()
             self.program_filtered_rows = flt
+
+    def _export_top_issues_csv(self):
+            tree = getattr(self, 'top_issues_tree', None)
+            if tree is None or tree.topLevelItemCount() == 0:
+                QMessageBox.information(self, "Brak danych", "Brak danych w drzewie do eksportu.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Zapisz CSV",
+                "top_issues.csv",
+                "CSV Files (*.csv)",
+            )
+            if not path:
+                return
+            headers = ["Maszyna", "Pin", "Step", "Parametr", "Zmian"]
+            try:
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.writer(f, delimiter=';')
+                    w.writerow(headers)
+                    for i in range(tree.topLevelItemCount()):
+                        item = tree.topLevelItem(i)
+                        w.writerow([
+                            item.text(0),
+                            item.text(1),
+                            item.text(2),
+                            item.text(3),
+                            item.text(4),
+                        ])
+                self._log(f"[Export] Zapisano CSV: {path}")
+            except Exception as ex:
+                QMessageBox.critical(self, "Blad eksportu", str(ex))
+
+    def _export_change_tree_csv(self):
+            tree = getattr(self, 'change_tree', None)
+            if tree is None or tree.topLevelItemCount() == 0:
+                QMessageBox.information(self, "Brak danych", "Brak danych w drzewie do eksportu.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Zapisz CSV",
+                "podsumowanie_zmian.csv",
+                "CSV Files (*.csv)",
+            )
+            if not path:
+                return
+            headers = ["Poziom", "Maszyna", "Pin", "Step", "Parametr", "Zmian"]
+
+            def step_label(text: str) -> str:
+                label = (text or "").strip()
+                if label.lower().startswith("step "):
+                    return label[5:].strip()
+                return label
+
+            def level_label(kind: str, level: int) -> str:
+                mapping = {
+                    "machine": "Maszyna",
+                    "pin": "Pin",
+                    "step": "Step",
+                    "param": "Parametr",
+                }
+                if kind in mapping:
+                    return mapping[kind]
+                return f"Poziom {level + 1}"
+
+            try:
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.writer(f, delimiter=';')
+                    w.writerow(headers)
+
+                    def walk(item, level: int, machine: str, pin: str, step: str):
+                        kind = ""
+                        data = item.data(0, Qt.UserRole)
+                        if isinstance(data, tuple) and data:
+                            kind = data[0]
+                            if kind == 'machine':
+                                machine = data[1] or item.text(0)
+                            elif kind == 'pin':
+                                machine = data[1] or machine
+                                pin = data[2] or item.text(0)
+                            elif kind == 'step':
+                                machine = data[1] or machine
+                                step = data[2] or step_label(item.text(0))
+                            elif kind == 'param':
+                                machine = data[1] or machine
+                                pin = data[2] or pin
+                                step = data[3] or step
+                        else:
+                            if level == 0:
+                                machine = item.text(0)
+                            elif level == 1:
+                                pin = item.text(0)
+                            elif level == 2:
+                                step = step_label(item.text(0))
+
+                        param = item.text(0) if level >= 3 or kind == 'param' else ""
+                        if kind == 'param' and isinstance(data, tuple) and len(data) >= 5:
+                            param = data[4] or param
+
+                        w.writerow([
+                            level_label(kind, level),
+                            machine,
+                            pin,
+                            step,
+                            param,
+                            item.text(1),
+                        ])
+                        for idx in range(item.childCount()):
+                            walk(item.child(idx), level + 1, machine, pin, step)
+
+                    for i in range(tree.topLevelItemCount()):
+                        walk(tree.topLevelItem(i), 0, "", "", "")
+
+                self._log(f"[Export] Zapisano CSV: {path}")
+            except Exception as ex:
+                QMessageBox.critical(self, "Blad eksportu", str(ex))
+
+    def _export_tree_csv(self):
+            tree = getattr(self, 'tree', None)
+            if tree is None or tree.topLevelItemCount() == 0:
+                QMessageBox.information(self, "Brak danych", "Brak danych w drzewie do eksportu.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Zapisz CSV",
+                "drzewo_zmian.csv",
+                "CSV Files (*.csv)",
+            )
+            if not path:
+                return
+            headers = ["Poziom", "Maszyna", "Data", "Godzina", "Zmian", "OK", "NOK", "Szczegoly"]
+            try:
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.writer(f, delimiter=';')
+                    w.writerow(headers)
+                    for i in range(tree.topLevelItemCount()):
+                        m_item = tree.topLevelItem(i)
+                        machine = m_item.text(0)
+                        w.writerow([
+                            "Maszyna",
+                            machine,
+                            "",
+                            "",
+                            m_item.text(1),
+                            m_item.text(2),
+                            m_item.text(3),
+                            m_item.text(4),
+                        ])
+                        for j in range(m_item.childCount()):
+                            d_item = m_item.child(j)
+                            day = d_item.text(0)
+                            w.writerow([
+                                "Dzien",
+                                machine,
+                                day,
+                                "",
+                                d_item.text(1),
+                                d_item.text(2),
+                                d_item.text(3),
+                                d_item.text(4),
+                            ])
+                            for k in range(d_item.childCount()):
+                                h_item = d_item.child(k)
+                                hour = h_item.text(0)
+                                w.writerow([
+                                    "Godzina",
+                                    machine,
+                                    day,
+                                    hour,
+                                    h_item.text(1),
+                                    h_item.text(2),
+                                    h_item.text(3),
+                                    h_item.text(4),
+                                ])
+                self._log(f"[Export] Zapisano CSV: {path}")
+            except Exception as ex:
+                QMessageBox.critical(self, "Blad eksportu", str(ex))
 
     def _export_analysis_csv(self):
             rows = getattr(self, 'analysis_filtered_rows', getattr(self, 'analysis_events', []))
