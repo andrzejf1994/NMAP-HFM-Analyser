@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QSettings, Qt, QObject, pyqtSignal, QThread
+from PyQt5.QtCore import QSettings, Qt, QObject, pyqtSignal, QThread, QStandardPaths
 import os
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -108,6 +108,9 @@ class SettingsDialog(QDialog):
         self.cache_browse_btn = QPushButton("Wybierz...")
         self.cache_browse_btn.clicked.connect(self._browse_cache_path)
         self.persistent_check.toggled.connect(self._on_persistent_toggled)
+        self.offline_check = QCheckBox("Tryb offline (baza)")
+        self.offline_check.setChecked(self.settings.value("offline_cache_mode", False, type=bool))
+        self.offline_check.toggled.connect(self._on_offline_toggled)
         self.cache_keep_days_spin = QSpinBox()
         self.cache_keep_days_spin.setRange(0, 3650)
         self.cache_keep_days_spin.setValue(self.settings.value("cache_keep_days", 30, type=int))
@@ -123,6 +126,8 @@ class SettingsDialog(QDialog):
         preset_h66.clicked.connect(
             lambda: self._set_path(DEFAULT_PATH_H66_2, 436, "BSG H66 2")
         )
+        preset_offline = QPushButton("Tryb offline (baza)")
+        preset_offline.clicked.connect(self._set_offline_preset)
 
         form = QFormLayout()
         row = QHBoxLayout()
@@ -138,6 +143,7 @@ class SettingsDialog(QDialog):
         form.addRow("Wyklucz maszyny (SAP):", self.intra_excl_edit)
         form.addRow("Baza danych (SQLite):", self.db_path_label)
         form.addRow(self.persistent_check)
+        form.addRow(self.offline_check)
         cache_row = QHBoxLayout()
         cache_row.addWidget(self.cache_path_edit)
         cache_row.addWidget(self.cache_browse_btn)
@@ -150,6 +156,7 @@ class SettingsDialog(QDialog):
         presets = QHBoxLayout()
         presets.addWidget(preset_evo)
         presets.addWidget(preset_h66)
+        presets.addWidget(preset_offline)
         form.addRow("Presety:", presets)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -168,6 +175,7 @@ class SettingsDialog(QDialog):
             """
         )
         self._on_persistent_toggled(self.persistent_check.isChecked())
+        self._on_offline_toggled(self.offline_check.isChecked())
 
     def _on_path_text_changed(self, _: str) -> None:
         if not getattr(self, "_block_path_signal", False):
@@ -205,11 +213,63 @@ class SettingsDialog(QDialog):
         if path:
             self.cache_path_edit.setText(path)
 
+    def _default_cache_path(self) -> str:
+        base = ""
+        try:
+            base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
+        except Exception:
+            base = ""
+        if not base:
+            try:
+                base = os.path.join(os.path.expanduser("~"), "HFM Analyzer")
+            except Exception:
+                base = ""
+        if base:
+            try:
+                os.makedirs(base, exist_ok=True)
+            except Exception:
+                pass
+            return os.path.join(base, "hfm_analyzer_cache.sqlite")
+        return "hfm_analyzer_cache.sqlite"
+
+    def _set_offline_preset(self) -> None:
+        self.offline_check.setChecked(True)
+        self.persistent_check.setChecked(True)
+        self._on_persistent_toggled(True)
+        if not self.cache_path_edit.text().strip():
+            self.cache_path_edit.setText(self._default_cache_path())
+            QMessageBox.information(
+                self,
+                "Tryb offline",
+                "Aby użyć trybu offline, wskaż plik trwałej bazy danych.\n"
+                "Domyślna lokalizacja została ustawiona – możesz ją zmienić.",
+            )
+
     def _on_persistent_toggled(self, checked: bool) -> None:
         self.cache_path_edit.setEnabled(checked)
         self.cache_browse_btn.setEnabled(checked)
         self.cache_keep_days_spin.setEnabled(checked)
         self.cache_clear_btn.setEnabled(checked)
+        try:
+            self.offline_check.setEnabled(checked)
+            if not checked:
+                self.offline_check.setChecked(False)
+        except Exception:
+            pass
+
+    def _on_offline_toggled(self, checked: bool) -> None:
+        if not checked:
+            return
+        if not self.persistent_check.isChecked():
+            self.persistent_check.setChecked(True)
+        if not self.cache_path_edit.text().strip():
+            self.cache_path_edit.setText(self._default_cache_path())
+            QMessageBox.information(
+                self,
+                "Tryb offline",
+                "Aby użyć trybu offline, wskaż plik trwałej bazy danych.\n"
+                "Domyślna lokalizacja została ustawiona – możesz ją zmienić.",
+            )
 
     def _clear_cache(self) -> None:
         if not self.persistent_check.isChecked():
@@ -276,6 +336,15 @@ class SettingsDialog(QDialog):
         self.settings.setValue("cache_persistent", persistent)
         self.settings.setValue("cache_path", cache_path)
         self.settings.setValue("cache_keep_days", int(self.cache_keep_days_spin.value()))
+        offline = bool(self.offline_check.isChecked())
+        if offline and (not persistent or not cache_path):
+            QMessageBox.warning(
+                self,
+                "Tryb offline",
+                "Aby użyć trybu offline, włącz trwałą bazę i wskaż jej plik.",
+            )
+            return
+        self.settings.setValue("offline_cache_mode", offline)
         self.accept()
 
 class NetworkCheckDialog(QDialog):

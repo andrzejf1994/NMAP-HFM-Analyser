@@ -25,10 +25,6 @@ def ensure_base_path(settings: QSettings) -> bool:
         base_path = DEFAULT_PATH_H66_2
 
     if network_path_available(base_path):
-        try:
-            settings.setValue("offline_cache_mode", False)
-        except Exception:
-            pass
         return True
 
     try:

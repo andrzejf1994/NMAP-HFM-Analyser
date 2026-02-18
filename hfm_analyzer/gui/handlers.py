@@ -314,6 +314,14 @@ class MainWindowHandlers:
             except Exception:
                 pass
 
+    def _yield_ui(self, counter: int, step: int = 2000) -> None:
+            if counter % step != 0:
+                return
+            try:
+                QApplication.processEvents()
+            except Exception:
+                pass
+
     def _is_offline_cache_mode(self) -> bool:
             try:
                 return bool(self.settings.value("offline_cache_mode", False, type=bool))
@@ -330,17 +338,16 @@ class MainWindowHandlers:
             base_path = self.settings.value("base_path", "", type=str)
             display_name = self.settings.value("base_path_display_name", "", type=str)
             display_name = display_name.strip()
-            if self._is_offline_cache_mode():
-                self.base_path_label.setText("Linia: <b>Tryb offline (baza)</b>")
-                return
             if display_name:
                 disp = display_name
             elif base_path:
                 disp = base_path
             else:
                 disp = "(nie ustawiono)"
-
-            self.base_path_label.setText(f"Linia: <b>{disp}</b>")
+            if self._is_offline_cache_mode():
+                self.base_path_label.setText(f"Linia: <b>{disp}</b> (offline)")
+            else:
+                self.base_path_label.setText(f"Linia: <b>{disp}</b>")
 
     def _get_base_path(self) -> str:
             return self.settings.value("base_path", "", type=str)
@@ -504,17 +511,15 @@ class MainWindowHandlers:
             base_path = self._get_base_path()
             self.machine_list.clear()
             self._all_machines.clear()
-            if base_path and network_path_available(base_path):
-                if self._is_offline_cache_mode():
-                    self._set_offline_cache_mode(False)
+            if self._is_offline_cache_mode():
+                if self._populate_machines_from_cache():
                     try:
                         self._refresh_base_path_label()
                     except Exception:
                         pass
-                self._reset_date_bounds()
-            elif self._is_offline_cache_mode():
-                if self._populate_machines_from_cache():
                     return
+            if base_path and network_path_available(base_path):
+                self._reset_date_bounds()
             if not base_path or not network_path_available(base_path):
                 self.machine_list.addItem("(brak dostępnych katalogów)")
                 self.scan_btn.setEnabled(False)
@@ -542,7 +547,6 @@ class MainWindowHandlers:
             new_path = QFileDialog.getExistingDirectory(self, "Wskaż katalog bazowy z backupami")
             if new_path:
                 self.settings.setValue("base_path", new_path)
-                self._set_offline_cache_mode(False)
                 if new_path != old_path:
                     self._reset_results_state(clear_found_files=True)
                 self._refresh_base_path_label()
@@ -1585,6 +1589,10 @@ class MainWindowHandlers:
 
     def _on_intranet_ready(self, data: dict):
             try:
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
                 series = data.get('series', {}) if isinstance(data, dict) else {}
                 rows = data.get('rows', []) if isinstance(data, dict) else []
 
@@ -1650,7 +1658,10 @@ class MainWindowHandlers:
                     return '', ''
 
                 by_sn = {}
+                row_idx = 0
                 for r in all_rows:
+                    row_idx += 1
+                    self._yield_ui(row_idx)
                     by_sn.setdefault(r.get('serial_no',''), []).append(r)
 
                 source_cache: dict[str, tuple[str, str]] = {}
@@ -1754,7 +1765,10 @@ class MainWindowHandlers:
                 enriched_all: list[dict] = []
                 actual_hits = 0
                 source_hits = 0
+                row_idx = 0
                 for r in all_rows:
+                    row_idx += 1
+                    self._yield_ui(row_idx)
                     rr = dict(r)
                     src_opis, raw_src_code = source_cache.get(r.get('serial_no', ''), ('', ''))
                     canonical_src = _canonical_machine(raw_src_code)
@@ -1816,7 +1830,10 @@ class MainWindowHandlers:
                 self.intranet_all_rows = enriched_all
 
                 enriched: list[dict] = []
+                row_idx = 0
                 for r in rows:
+                    row_idx += 1
+                    self._yield_ui(row_idx)
                     rr = dict(r)
                     src_opis, raw_src_code = source_cache.get(r.get('serial_no', ''), ('', ''))
                     canonical_src = _canonical_machine(raw_src_code)
@@ -2741,6 +2758,23 @@ class MainWindowHandlers:
                 except Exception:
                     pass
 
+            cache_busy = isinstance(cache, RuntimeSQLiteCache)
+            prev_status = None
+            if cache_busy:
+                try:
+                    prev_status = self.status_label.text()
+                    self.status_label.setText("Wczytywanie z bazy...")
+                except Exception:
+                    pass
+                try:
+                    self._set_task_active('cache', True)
+                except Exception:
+                    pass
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+
             self._log(
                 "[Analysis] Przetworzono rekordy: "
                 f"params={counts.get('params', 0)}, "
@@ -2824,7 +2858,10 @@ class MainWindowHandlers:
                 )
             else:
                 param_iter = []
+            param_idx = 0
             for s in param_iter:
+                param_idx += 1
+                self._yield_ui(param_idx)
                 key = (s.machine, s.table, s.pin, s.step)
                 if key not in baseline_done:
 
@@ -2945,6 +2982,16 @@ class MainWindowHandlers:
             )
             self.analysis_events = events
             self.program_events = prog_events
+            try:
+                machines_with_files = {f.machine for f in getattr(self, 'found_files', []) if getattr(f, 'machine', '')}
+                machines_with_param_changes = {e.get('machine', '') for e in events if e.get('machine')}
+                missing = sorted(machines_with_files.difference(machines_with_param_changes))
+                if missing:
+                    self._log(
+                        f"[Analysis] Brak zmian parametrów dla maszyn: {', '.join(missing)}"
+                    )
+            except Exception:
+                pass
             self._populate_analysis_filters()
             self._analysis_auto_resize = True
             self._apply_analysis_filters()
@@ -2992,6 +3039,16 @@ class MainWindowHandlers:
                 self._apply_trend_filters()
             except Exception:
                 pass
+            if cache_busy:
+                try:
+                    self._set_task_active('cache', False)
+                except Exception:
+                    pass
+                try:
+                    if prev_status and self.status_label.text() == "Wczytywanie z bazy...":
+                        self.status_label.setText(prev_status)
+                except Exception:
+                    pass
 
     def _populate_analysis_filters(self):
 
@@ -3011,6 +3068,13 @@ class MainWindowHandlers:
                 step_entry = pin_entry.setdefault(step, set())
                 if params:
                     step_entry.update(params)
+            try:
+                machines_all = {f.machine for f in getattr(self, 'found_files', []) if getattr(f, 'machine', '')}
+            except Exception:
+                machines_all = set()
+            for machine in machines_all:
+                if machine and machine not in hierarchy:
+                    hierarchy[machine] = {}
             self._analysis_filter_hierarchy = hierarchy
 
             machines = [key for key in hierarchy.keys() if key]
@@ -3812,6 +3876,15 @@ class MainWindowHandlers:
             dt_combo.blockSignals(False)
             if machine_combo.count():
                 machine_combo.setCurrentIndex(0)
+                try:
+                    machine_key = machine_combo.currentData(Qt.UserRole)
+                    if machine_key is None:
+                        text = machine_combo.currentText()
+                        machine_key = '' if text == '-' else text
+                    machine_key = machine_key if isinstance(machine_key, str) else str(machine_key or '')
+                    self._update_param_card_datetime_options(machine_key)
+                except Exception:
+                    pass
             else:
                 self._set_param_card_group(None, None)
 
@@ -4480,7 +4553,10 @@ class MainWindowHandlers:
             events: list[dict] = []
             last_state: dict[tuple[str, str], GripSnapshot | HairpinSnapshot] = {}
             baseline_done: set[tuple[str, str]] = set()
+            idx = 0
             for snap in snaps:
+                idx += 1
+                self._yield_ui(idx)
                 if not isinstance(snap, (GripSnapshot, HairpinSnapshot)):
                     continue
                 key = (snap.machine, snap.pin)
@@ -4532,7 +4608,10 @@ class MainWindowHandlers:
             last_state: dict[tuple[str, str, int], IndexSnapshot] = {}
             last_prog: dict[tuple[str, str, int], str] = {}
             baseline_done: set[tuple[str, str, int]] = set()
+            idx = 0
             for s in snaps:
+                idx += 1
+                self._yield_ui(idx)
                 key = (s.machine, s.table, s.step)
                 if key not in baseline_done:
                     baseline_done.add(key)
@@ -4671,7 +4750,10 @@ class MainWindowHandlers:
             seen: dict[tuple, dict] = {}
             deduped: list[dict] = []
             order = tuple(PARAM_DISPLAY_ORDER)
+            idx = 0
             for event in events:
+                idx += 1
+                self._yield_ui(idx)
                 if event.get('type') != 'change':
                     deduped.append(event)
                     continue
@@ -4699,7 +4781,10 @@ class MainWindowHandlers:
             order = tuple(INDEX_PARAM_DISPLAY_ORDER)
             merged = 0
             logger = logging.getLogger(__name__)
+            idx = 0
             for event in events:
+                idx += 1
+                self._yield_ui(idx)
                 if event.get('type') != 'index_change':
                     deduped.append(event)
                     continue
@@ -4809,6 +4894,14 @@ class MainWindowHandlers:
                         pin_entry = machine_entry.setdefault(pin, {})
                         step_entry = pin_entry.setdefault(step_key, {})
                         step_entry[name] = step_entry.get(name, 0) + 1
+
+                try:
+                    machines_all = {f.machine for f in getattr(self, 'found_files', []) if getattr(f, 'machine', '')}
+                except Exception:
+                    machines_all = set()
+                for machine in sorted(machines_all):
+                    if machine and machine not in nested:
+                        nested[machine] = {}
 
                 def step_total(params_dict: dict[str, int]) -> int:
                     return sum(params_dict.values())
