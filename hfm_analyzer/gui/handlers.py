@@ -227,6 +227,44 @@ class MainWindowHandlers:
                 machines = None
             return start_dt, end_dt, machines
 
+    def _current_analysis_range(self) -> tuple[datetime | None, datetime | None]:
+            try:
+                start_dt = self.start_datetime.dateTime().toPyDateTime()
+                end_dt = self.end_datetime.dateTime().toPyDateTime()
+            except Exception:
+                return None, None
+            if start_dt is not None and end_dt is not None and end_dt < start_dt:
+                start_dt, end_dt = end_dt, start_dt
+            return start_dt, end_dt
+
+    def _filter_intranet_rows_for_analysis(self, rows: list[dict]) -> list[dict]:
+            start_dt, end_dt = self._current_analysis_range()
+            if start_dt is None and end_dt is None:
+                return list(rows)
+            filtered: list[dict] = []
+            for rr in rows:
+                dt = rr.get('data')
+                if not isinstance(dt, datetime):
+                    continue
+                if start_dt is not None and dt < start_dt:
+                    continue
+                if end_dt is not None and dt > end_dt:
+                    continue
+                filtered.append(rr)
+            return filtered
+
+    def _dedup_intranet_rows(self, rows: list[dict]) -> list[dict]:
+            sorted_rows = sorted(rows, key=lambda r: r.get('data'))
+            seen = set()
+            deduped: list[dict] = []
+            for rr in sorted_rows:
+                sn = rr.get('serial_no','')
+                if sn in seen:
+                    continue
+                seen.add(sn)
+                deduped.append(rr)
+            return deduped
+
     def _apply_styles(self):
             self.setStyleSheet(
                 """
@@ -1643,6 +1681,7 @@ class MainWindowHandlers:
                 self.intranet_filtered_rows = []
                 self.intranet_all_rows = []
                 self.intranet_nok_rows = []
+                self.intranet_nok_rows_all = []
                 if hasattr(self, 'intra_table') and self.intra_table is not None:
                     self.intra_table.setRowCount(0)
                 if hasattr(self, 'bar_native') and self.bar_native is not None:
@@ -2013,15 +2052,9 @@ class MainWindowHandlers:
                 except Exception:
                     pass
                 # Deduplicate by serial_no, keep oldest (by 'data')
-                enriched.sort(key=lambda r: r.get('data'))
-                seen = set()
-                dedup = []
-                for rr in enriched:
-                    sn = rr.get('serial_no','')
-                    if sn in seen:
-                        continue
-                    seen.add(sn)
-                    dedup.append(rr)
+                filtered_rows = self._filter_intranet_rows_for_analysis(enriched)
+                dedup = self._dedup_intranet_rows(filtered_rows)
+                self.intranet_nok_rows_all = list(enriched)
                 try:
                     mapped_cnt = sum(1 for rr in dedup if rr.get('source_mapped'))
                     feeder_cnt = sum(1 for r0 in (all_rows or []) if 'podajnik drutu' in str(r0.get('maszyna_opis','')).lower())
@@ -2554,6 +2587,7 @@ class MainWindowHandlers:
                 self.intranet_filtered_rows = []
                 self.intranet_all_rows = []
                 self.intranet_nok_rows = []
+                self.intranet_nok_rows_all = []
                 self._populate_pareto_filters()
             except Exception:
                 pass
@@ -3923,7 +3957,9 @@ class MainWindowHandlers:
     def _populate_pareto_filters(self) -> None:
             if not hasattr(self, 'pareto_machine_combo'):
                 return
-            rows = getattr(self, 'intranet_nok_rows', [])
+            rows = getattr(self, 'intranet_nok_rows_all', getattr(self, 'intranet_nok_rows', []))
+            rows = self._filter_intranet_rows_for_analysis(rows)
+            rows = self._dedup_intranet_rows(rows)
             machines = {self._pareto_target_label(r) for r in rows}
             machines = {m for m in machines if m}
             self._set_combo_items(self.pareto_machine_combo, machines)
@@ -3933,7 +3969,9 @@ class MainWindowHandlers:
             chart = getattr(self, 'pareto_chart', None)
             if chart is None:
                 return
-            rows = getattr(self, 'intranet_nok_rows', [])
+            rows = getattr(self, 'intranet_nok_rows_all', getattr(self, 'intranet_nok_rows', []))
+            rows = self._filter_intranet_rows_for_analysis(rows)
+            rows = self._dedup_intranet_rows(rows)
             if not rows:
                 chart.set_data({})
                 if hasattr(self, 'pareto_summary_label'):

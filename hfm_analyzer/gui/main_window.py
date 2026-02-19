@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QDialog,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -314,6 +315,15 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
             chart = LineChartWidget()
             chart.setMinimumHeight(220)
             chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            header = QHBoxLayout()
+            header.addStretch(1)
+            zoom_btn = QToolButton()
+            zoom_btn.setText("Powiększ")
+            zoom_btn.setToolTip("Powiększ wykres")
+            zoom_btn.setAutoRaise(True)
+            zoom_btn.clicked.connect(lambda _, c=chart, n=name: self._open_line_chart_zoom(c, n))
+            header.addWidget(zoom_btn)
+            group_layout.addLayout(header)
             group_layout.addWidget(chart)
             pc_container_layout.addWidget(group)
             self.param_line_charts[name] = chart
@@ -368,6 +378,15 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
             chart = LineChartWidget()
             chart.setMinimumHeight(220)
             chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            header = QHBoxLayout()
+            header.addStretch(1)
+            zoom_btn = QToolButton()
+            zoom_btn.setText("Powiększ")
+            zoom_btn.setToolTip("Powiększ wykres")
+            zoom_btn.setAutoRaise(True)
+            zoom_btn.clicked.connect(lambda _, c=chart, n=name: self._open_line_chart_zoom(c, n))
+            header.addWidget(zoom_btn)
+            group_layout.addLayout(header)
             group_layout.addWidget(chart)
             ic_container_layout.addWidget(group)
             self.index_line_charts[name] = chart
@@ -531,6 +550,7 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         self.intranet_filtered_rows: list[dict] = []
         self.intranet_all_rows: list[dict] = []
         self.intranet_nok_rows: list[dict] = []
+        self.intranet_nok_rows_all: list[dict] = []
     
     
         self.pareto_tab = QWidget()
@@ -631,5 +651,29 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         self._refresh_base_path_label()
         self._populate_machines()
         self._apply_styles()
+
+    def _open_line_chart_zoom(self, source: LineChartWidget, title: str | None = None) -> None:
+        if source is None:
+            return
+        chart_title, points, color = source.series_snapshot()
+        if title:
+            chart_title = title
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Wykres: {chart_title}")
+        dialog.setWindowFlags(
+            dialog.windowFlags()
+            | Qt.Window
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowMinimizeButtonHint
+        )
+        dialog.setMinimumSize(820, 520)
+        layout = QVBoxLayout(dialog)
+        from PyQt5.QtWidgets import QSizePolicy
+        zoom_chart = LineChartWidget()
+        zoom_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        zoom_chart.setMinimumHeight(360)
+        zoom_chart.set_series(chart_title, points, color)
+        layout.addWidget(zoom_chart)
+        dialog.exec_()
 
 __all__ = ["ModernMainWindow"]
