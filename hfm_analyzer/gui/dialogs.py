@@ -26,6 +26,7 @@ from hfm_analyzer.constants import (
     DEFAULT_INTRANET_EXCLUDES,
     DEFAULT_PATH_EVO,
     DEFAULT_PATH_H66_2,
+    default_cycle_time_sec,
 )
 from hfm_analyzer.utils import network_path_available
 from hfm_analyzer.storage.runtime_sqlite_cache import RuntimeSQLiteCache
@@ -78,6 +79,13 @@ class SettingsDialog(QDialog):
         self.line_id_spin = QSpinBox()
         self.line_id_spin.setRange(1, 10000)
         self.line_id_spin.setValue(self.settings.value("intranet_line_id", 436, type=int))
+        self._cycle_time_by_line_local: dict[int, int] = {}
+        self._current_cycle_line_id = int(self.line_id_spin.value())
+        self.cycle_time_spin = QSpinBox()
+        self.cycle_time_spin.setRange(1, 3600)
+        self.cycle_time_spin.setSuffix(" s")
+        self.cycle_time_spin.setValue(self._cycle_time_for_line(self._current_cycle_line_id))
+        self.line_id_spin.valueChanged.connect(self._on_line_id_changed)
 
         excl_val = self.settings.value("intranet_exclude_machines", DEFAULT_INTRANET_EXCLUDES, type=str)
         if not excl_val:
@@ -138,6 +146,7 @@ class SettingsDialog(QDialog):
         form.addRow("Wątki analizy (0=auto):", self.workers_spin)
         form.addRow("Próg dużej zmiany (%):", self.threshold_spin)
         form.addRow("ID linii (intranet):", self.line_id_spin)
+        form.addRow("Czas cyklu maszyny (max):", self.cycle_time_spin)
         form.addRow("Dni wstecz (Intranet):", self.intra_days_back_spin)
         form.addRow("Timeout na dzień (Intranet):", self.intra_timeout_spin)
         form.addRow("Wyklucz maszyny (SAP):", self.intra_excl_edit)
@@ -181,6 +190,23 @@ class SettingsDialog(QDialog):
         if not getattr(self, "_block_path_signal", False):
             self._pending_display_name = ""
             self._last_checked_path = ""
+
+    def _cycle_time_key(self, line_id: int) -> str:
+        return f"cycle_time_sec_line_{int(line_id)}"
+
+    def _cycle_time_for_line(self, line_id: int) -> int:
+        key = self._cycle_time_key(line_id)
+        return int(self.settings.value(key, default_cycle_time_sec(line_id), type=int))
+
+    def _on_line_id_changed(self, value: int) -> None:
+        prev_line_id = int(getattr(self, "_current_cycle_line_id", value))
+        self._cycle_time_by_line_local[prev_line_id] = int(self.cycle_time_spin.value())
+        self._current_cycle_line_id = int(value)
+        next_value = self._cycle_time_by_line_local.get(
+            int(value),
+            self._cycle_time_for_line(int(value)),
+        )
+        self.cycle_time_spin.setValue(int(next_value))
 
     def _apply_path(self, path: str, display_name: str | None = None) -> str:
         mapped = _maybe_offer_drive_mapping(self, path).strip()
@@ -321,6 +347,9 @@ class SettingsDialog(QDialog):
         self.settings.setValue("analysis_workers", int(self.workers_spin.value()))
         self.settings.setValue("large_change_threshold_pct", int(self.threshold_spin.value()))
         self.settings.setValue("intranet_line_id", int(self.line_id_spin.value()))
+        self._cycle_time_by_line_local[int(self.line_id_spin.value())] = int(self.cycle_time_spin.value())
+        for line_id, cycle_sec in self._cycle_time_by_line_local.items():
+            self.settings.setValue(self._cycle_time_key(int(line_id)), int(cycle_sec))
         self.settings.setValue("intranet_exclude_machines", self.intra_excl_edit.text().strip())
         self.settings.setValue("intranet_days_back", int(self.intra_days_back_spin.value()))
         self.settings.setValue("intranet_timeout_per_day_sec", int(self.intra_timeout_spin.value()))

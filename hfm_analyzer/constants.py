@@ -6,6 +6,20 @@ APP_NAME = "HFM Analyzer"
 DEFAULT_PATH_EVO = r"\\\\nmap-production-backup.nidec.eu\\backup-from-lines\\ZI01-0010-0890\\ZI01-0010-0890-0305-0010"
 DEFAULT_PATH_H66_2 = r"\\\\nmap-production-backup.nidec.eu\\backup-from-lines\\ZI01-0010-0920\\ZI01-0010-0920-0370-0010"
 
+DEFAULT_CYCLE_TIME_BY_LINE_ID = {
+    424: 370,  # EVO
+    436: 372,  # H66 2
+}
+DEFAULT_CYCLE_TIME_SEC = 372
+
+
+def default_cycle_time_sec(line_id: int | None) -> int:
+    try:
+        lid = int(line_id or 0)
+    except Exception:
+        lid = 0
+    return int(DEFAULT_CYCLE_TIME_BY_LINE_ID.get(lid, DEFAULT_CYCLE_TIME_SEC))
+
 PARAM_NAMES = [
     "X",
     "Y",
@@ -162,6 +176,9 @@ __all__ = [
     "DEFAULT_PATH_H66_2",
     "DEFAULT_INTRANET_EXCLUDES",
     "DEFAULT_INTRANET_EXCLUDES_LIST",
+    "DEFAULT_CYCLE_TIME_BY_LINE_ID",
+    "DEFAULT_CYCLE_TIME_SEC",
+    "default_cycle_time_sec",
     "PARAM_NAMES",
     "PARAM_DISPLAY_ORDER",
     "INDEX_PARAM_NAMES",

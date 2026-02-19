@@ -52,6 +52,7 @@ from hfm_analyzer.constants import (
     PARAM_NAMES,
     PARAM_DISPLAY_ORDER,
     SUMMARY_PALETTE,
+    default_cycle_time_sec,
 )
 from hfm_analyzer.models import (
     FoundFile,
@@ -333,6 +334,26 @@ class MainWindowHandlers:
                 self.settings.setValue("offline_cache_mode", bool(enabled))
             except Exception:
                 pass
+
+    def _on_tree_color_metric_changed(self, _index: int) -> None:
+            try:
+                self._render_summary()
+            except Exception:
+                pass
+
+    def _cycle_time_sec_for_current_line(self) -> float:
+            try:
+                line_id = int(self.settings.value("intranet_line_id", 436, type=int))
+            except Exception:
+                line_id = 436
+            key = f"cycle_time_sec_line_{line_id}"
+            try:
+                value = float(self.settings.value(key, default_cycle_time_sec(line_id), type=int))
+            except Exception:
+                value = float(default_cycle_time_sec(line_id))
+            if value <= 0:
+                value = float(default_cycle_time_sec(line_id))
+            return value
 
     def _refresh_base_path_label(self):
             base_path = self.settings.value("base_path", "", type=str)
@@ -1037,11 +1058,13 @@ class MainWindowHandlers:
 
             if hasattr(self, 'tree') and self.tree is not None:
 
-                def color_for(val, vmin, vmax):
+                def color_for_metric(val, vmin, vmax, lower_is_better: bool):
                     if vmax == vmin:
-
                         return QColor('#e0f7e9')
                     t = (val - vmin) / float(vmax - vmin)
+                    if not lower_is_better:
+                        t = 1.0 - t
+                    t = max(0.0, min(1.0, t))
 
                     g = (0x2e, 0xcc, 0x71)
                     r = (0xe7, 0x4c, 0x3c)
@@ -1051,6 +1074,81 @@ class MainWindowHandlers:
                     return QColor(rr, gg, bb)
 
                 self.tree.clear()
+                metric_kind = "changes"
+                try:
+                    combo = getattr(self, "tree_color_metric_combo", None)
+                    if combo is not None:
+                        metric_kind = str(combo.currentData() or "changes")
+                except Exception:
+                    metric_kind = "changes"
+                lower_is_better = metric_kind in ("changes", "nok_pct")
+
+                def _minmax(values: list[float | None]) -> tuple[float | None, float | None]:
+                    vals = [float(v) for v in values if v is not None]
+                    if not vals:
+                        return None, None
+                    return min(vals), max(vals)
+
+                def _pick_metric(changes: int, nok_pct: float | None, oee: float | None) -> float | None:
+                    if metric_kind == "nok_pct":
+                        return nok_pct
+                    if metric_kind == "oee":
+                        return oee
+                    return float(changes)
+
+                def _row_color(metric_value: float | None, vmin: float | None, vmax: float | None) -> QColor:
+                    if metric_value is None or vmin is None or vmax is None:
+                        return QColor("#ecf0f1")
+                    return color_for_metric(metric_value, vmin, vmax, lower_is_better)
+
+                try:
+                    selected_start = self.start_datetime.dateTime().toPyDateTime()
+                    selected_end = self.end_datetime.dateTime().toPyDateTime()
+                    if selected_end < selected_start:
+                        selected_start, selected_end = selected_end, selected_start
+                except Exception:
+                    selected_start = None
+                    selected_end = None
+                if (selected_start is None or selected_end is None) and self.found_files:
+                    dts = [f.dt for f in self.found_files]
+                    selected_start = min(dts)
+                    selected_end = max(dts)
+                cycle_time_sec = self._cycle_time_sec_for_current_line()
+
+                def _quality_metrics(
+                    ok_cnt: int,
+                    nok_cnt: int,
+                    bucket_start: datetime | None = None,
+                    bucket_end: datetime | None = None,
+                ) -> tuple[str, float | None, str, float | None]:
+                    total_q = ok_cnt + nok_cnt
+                    if total_q > 0:
+                        pct_nok_val = (nok_cnt / total_q) * 100.0
+                        pct_nok_txt = f"{pct_nok_val:.1f}%"
+                    else:
+                        pct_nok_val = None
+                        pct_nok_txt = "-"
+                    window_secs = 0.0
+                    if bucket_start is not None and bucket_end is not None:
+                        if selected_start is not None and selected_end is not None:
+                            lo = max(bucket_start, selected_start)
+                            hi = min(bucket_end, selected_end)
+                            window_secs = max(0.0, (hi - lo).total_seconds())
+                        else:
+                            window_secs = max(0.0, (bucket_end - bucket_start).total_seconds())
+                    elif selected_start is not None and selected_end is not None:
+                        window_secs = max(0.0, (selected_end - selected_start).total_seconds())
+
+                    if window_secs > 0 and total_q > 0:
+                        max_cycles = window_secs / cycle_time_sec
+                        performance = min(1.0, total_q / max_cycles) if max_cycles > 0 else 0.0
+                        quality = ok_cnt / total_q
+                        oee_val = performance * quality * 100.0
+                        oee_txt = f"{oee_val:.1f}%"
+                    else:
+                        oee_val = None
+                        oee_txt = "-"
+                    return pct_nok_txt, pct_nok_val, oee_txt, oee_val
 
                 def _machine_code(name: object) -> str:
                     text = str(name or '').strip()
@@ -1085,15 +1183,17 @@ class MainWindowHandlers:
                 )
 
                 machine_totals = {}
+                machine_metric_vals: dict[str, float | None] = {}
                 for machine in machines_to_show:
                     machine_changes = grouped.get(machine, {})
                     total = sum(len(ch) for hours in machine_changes.values() for ch in hours.values())
                     machine_totals[machine] = total
-                if machine_totals:
-                    mmin = min(machine_totals.values())
-                    mmax = max(machine_totals.values())
-                else:
-                    mmin = mmax = 0
+                    machine_quality = quality_rollup.get(machine, {}) if quality_rollup else {}
+                    ok_machine = len(machine_quality.get('ok', ()))
+                    nok_machine = len(machine_quality.get('nok', ()))
+                    _, pct_nok_val, _, oee_val = _quality_metrics(ok_machine, nok_machine)
+                    machine_metric_vals[machine] = _pick_metric(total, pct_nok_val, oee_val)
+                mmin, mmax = _minmax(list(machine_metric_vals.values()))
 
 
                 try:
@@ -1112,11 +1212,14 @@ class MainWindowHandlers:
                     machine_quality = quality_rollup.get(machine, {}) if quality_rollup else {}
                     ok_machine = len(machine_quality.get('ok', ()))
                     nok_machine = len(machine_quality.get('nok', ()))
+                    pct_nok_txt, pct_nok_val, oee_txt, oee_val = _quality_metrics(ok_machine, nok_machine)
                     m_item = QTreeWidgetItem([
                         f"{machine}",
                         str(total_machine),
                         str(ok_machine),
                         str(nok_machine),
+                        pct_nok_txt,
+                        oee_txt,
                         "",
                     ])
                     self.tree.addTopLevelItem(m_item)
@@ -1124,12 +1227,16 @@ class MainWindowHandlers:
                     m_item.setTextAlignment(1, Qt.AlignCenter)
                     m_item.setTextAlignment(2, Qt.AlignCenter)
                     m_item.setTextAlignment(3, Qt.AlignCenter)
-                    m_col = color_for(total_machine, mmin, mmax)
+                    m_item.setTextAlignment(4, Qt.AlignCenter)
+                    m_item.setTextAlignment(5, Qt.AlignCenter)
+                    m_col = _row_color(_pick_metric(total_machine, pct_nok_val, oee_val), mmin, mmax)
 
                     m_item.setBackground(0, translucent(m_col, 70))
                     m_item.setBackground(1, m_col)
                     m_item.setBackground(2, translucent(m_col, 50))
                     m_item.setBackground(3, translucent(m_col, 50))
+                    m_item.setBackground(4, translucent(m_col, 45))
+                    m_item.setBackground(5, translucent(m_col, 45))
 
                     mc = color_map.get(machine, QColor('#3498db'))
                     ico = self._make_color_icon(mc)
@@ -1148,11 +1255,18 @@ class MainWindowHandlers:
                         day: sum(len(ch) for ch in hours.values())
                         for day, hours in machine_changes.items()
                     }
-                    if day_totals:
-                        dmin = min(day_totals.values())
-                        dmax = max(day_totals.values())
-                    else:
-                        dmin = dmax = 0
+                    day_metric_vals: dict[object, float | None] = {}
+                    for day, _hours in machine_changes.items():
+                        day_quality = machine_quality.get('days', {}).get(day, {}) if machine_quality else {}
+                        ok_day = len(day_quality.get('ok', ())) if day_quality else 0
+                        nok_day = len(day_quality.get('nok', ())) if day_quality else 0
+                        day_start_dt = datetime.combine(day, datetime.min.time())
+                        day_end_dt = day_start_dt + timedelta(days=1)
+                        _, day_pct_val, _, day_oee_val = _quality_metrics(
+                            ok_day, nok_day, day_start_dt, day_end_dt
+                        )
+                        day_metric_vals[day] = _pick_metric(day_totals.get(day, 0), day_pct_val, day_oee_val)
+                    dmin, dmax = _minmax(list(day_metric_vals.values()))
                     for day, hours_dict in sorted(machine_changes.items()):
                         total_day = day_totals[day]
                         day_quality = {}
@@ -1160,30 +1274,48 @@ class MainWindowHandlers:
                             day_quality = machine_quality.get('days', {}).get(day, {})
                         ok_day = len(day_quality.get('ok', ())) if day_quality else 0
                         nok_day = len(day_quality.get('nok', ())) if day_quality else 0
+                        day_start_dt = datetime.combine(day, datetime.min.time())
+                        day_end_dt = day_start_dt + timedelta(days=1)
+                        day_pct_txt, day_pct_val, day_oee_txt, day_oee_val = _quality_metrics(
+                            ok_day, nok_day, day_start_dt, day_end_dt
+                        )
                         d_item = QTreeWidgetItem([
                             f"{day.strftime('%Y-%m-%d')}",
                             str(total_day),
                             str(ok_day),
                             str(nok_day),
+                            day_pct_txt,
+                            day_oee_txt,
                             "",
                         ])
                         m_item.addChild(d_item)
                         d_item.setTextAlignment(1, Qt.AlignCenter)
                         d_item.setTextAlignment(2, Qt.AlignCenter)
                         d_item.setTextAlignment(3, Qt.AlignCenter)
-                        d_col = color_for(total_day, dmin, dmax)
+                        d_item.setTextAlignment(4, Qt.AlignCenter)
+                        d_item.setTextAlignment(5, Qt.AlignCenter)
+                        d_col = _row_color(_pick_metric(total_day, day_pct_val, day_oee_val), dmin, dmax)
                         d_item.setBackground(0, translucent(d_col, 60))
                         d_item.setBackground(1, d_col)
                         d_item.setBackground(2, translucent(d_col, 45))
                         d_item.setBackground(3, translucent(d_col, 45))
+                        d_item.setBackground(4, translucent(d_col, 40))
+                        d_item.setBackground(5, translucent(d_col, 40))
 
 
                         hour_totals = {hour: len(changes) for hour, changes in hours_dict.items()}
-                        if hour_totals:
-                            hmin = min(hour_totals.values())
-                            hmax = max(hour_totals.values())
-                        else:
-                            hmin = hmax = 0
+                        hour_metric_vals: dict[object, float | None] = {}
+                        for hour, changes in hours_dict.items():
+                            hour_quality = day_quality.get('hours', {}).get(hour, {}) if day_quality else {}
+                            ok_hour = len(hour_quality.get('ok', ())) if hour_quality else 0
+                            nok_hour = len(hour_quality.get('nok', ())) if hour_quality else 0
+                            hour_start_dt = hour
+                            hour_end_dt = hour + timedelta(hours=1)
+                            _, hour_pct_val, _, hour_oee_val = _quality_metrics(
+                                ok_hour, nok_hour, hour_start_dt, hour_end_dt
+                            )
+                            hour_metric_vals[hour] = _pick_metric(len(changes), hour_pct_val, hour_oee_val)
+                        hmin, hmax = _minmax(list(hour_metric_vals.values()))
                         for hour, changes in sorted(hours_dict.items()):
                             hour_str = hour.strftime('%H:00')
                             minutes = sorted({dt.strftime('%H:%M') for dt in changes})
@@ -1193,22 +1325,33 @@ class MainWindowHandlers:
                                 hour_quality = day_quality.get('hours', {}).get(hour, {})
                             ok_hour = len(hour_quality.get('ok', ())) if hour_quality else 0
                             nok_hour = len(hour_quality.get('nok', ())) if hour_quality else 0
+                            hour_start_dt = hour
+                            hour_end_dt = hour + timedelta(hours=1)
+                            hour_pct_txt, hour_pct_val, hour_oee_txt, hour_oee_val = _quality_metrics(
+                                ok_hour, nok_hour, hour_start_dt, hour_end_dt
+                            )
                             h_item = QTreeWidgetItem([
                                 f"{hour_str}",
                                 str(cnt),
                                 str(ok_hour),
                                 str(nok_hour),
+                                hour_pct_txt,
+                                hour_oee_txt,
                                 ", ".join(minutes),
                             ])
                             d_item.addChild(h_item)
                             h_item.setTextAlignment(1, Qt.AlignCenter)
                             h_item.setTextAlignment(2, Qt.AlignCenter)
                             h_item.setTextAlignment(3, Qt.AlignCenter)
-                            h_col = color_for(cnt, hmin, hmax)
+                            h_item.setTextAlignment(4, Qt.AlignCenter)
+                            h_item.setTextAlignment(5, Qt.AlignCenter)
+                            h_col = _row_color(_pick_metric(cnt, hour_pct_val, hour_oee_val), hmin, hmax)
                             h_item.setBackground(0, translucent(h_col, 50))
                             h_item.setBackground(1, h_col)
                             h_item.setBackground(2, translucent(h_col, 40))
                             h_item.setBackground(3, translucent(h_col, 40))
+                            h_item.setBackground(4, translucent(h_col, 35))
+                            h_item.setBackground(5, translucent(h_col, 35))
 
                 try:
                     self.tree.collapseAll()
@@ -2788,6 +2931,7 @@ class MainWindowHandlers:
             self.param_snapshots = []
             self.param_card_selection = None
             self.current_param_card_rows = []
+            start_dt, end_dt, machines_filter = self._analysis_cache_filters()
             try:
                 self._populate_param_card_filters()
             except Exception:
@@ -2806,7 +2950,7 @@ class MainWindowHandlers:
                 self._refresh_hp_grip_columns()
                 self._populate_hp_grip_filters()
             except Exception:
-                pass
+                self._log("[Analysis] HP/Grip error:\n" + traceback.format_exc())
             try:
                 nest_snaps = self._fetch_struct_snapshots(
                     "nest",
@@ -2821,7 +2965,7 @@ class MainWindowHandlers:
                 self._refresh_nest_columns()
                 self._populate_nest_filters()
             except Exception:
-                pass
+                self._log("[Analysis] Nest error:\n" + traceback.format_exc())
             try:
                 hairpin_snaps = self._fetch_struct_snapshots(
                     "hairpin",
@@ -2836,7 +2980,7 @@ class MainWindowHandlers:
                 self._refresh_stripping_columns()
                 self._populate_stripping_filters()
             except Exception:
-                pass
+                self._log("[Analysis] Hairpin error:\n" + traceback.format_exc())
             events = []
             prog_events = []
             seen_prog = set()
@@ -2847,7 +2991,6 @@ class MainWindowHandlers:
                 threshold_pct = float(self.settings.value("large_change_threshold_pct", 10, type=int))
             except Exception:
                 threshold_pct = 10.0
-            start_dt, end_dt, machines_filter = self._analysis_cache_filters()
             param_iter = None
             if isinstance(cache, RuntimeSQLiteCache):
                 param_iter = cache.iter_param_snapshots(
@@ -5500,7 +5643,7 @@ class MainWindowHandlers:
             )
             if not path:
                 return
-            headers = ["Poziom", "Maszyna", "Data", "Godzina", "Zmian", "OK", "NOK", "Szczegoly"]
+            headers = ["Poziom", "Maszyna", "Data", "Godzina", "Zmian", "OK", "NOK", "% NOK", "OEE", "Szczegoly"]
             try:
                 with open(path, 'w', newline='', encoding='utf-8') as f:
                     w = csv.writer(f, delimiter=';')
@@ -5517,6 +5660,8 @@ class MainWindowHandlers:
                             m_item.text(2),
                             m_item.text(3),
                             m_item.text(4),
+                            m_item.text(5),
+                            m_item.text(6),
                         ])
                         for j in range(m_item.childCount()):
                             d_item = m_item.child(j)
@@ -5530,6 +5675,8 @@ class MainWindowHandlers:
                                 d_item.text(2),
                                 d_item.text(3),
                                 d_item.text(4),
+                                d_item.text(5),
+                                d_item.text(6),
                             ])
                             for k in range(d_item.childCount()):
                                 h_item = d_item.child(k)
@@ -5543,6 +5690,8 @@ class MainWindowHandlers:
                                     h_item.text(2),
                                     h_item.text(3),
                                     h_item.text(4),
+                                    h_item.text(5),
+                                    h_item.text(6),
                                 ])
                 self._log(f"[Export] Zapisano CSV: {path}")
             except Exception as ex:

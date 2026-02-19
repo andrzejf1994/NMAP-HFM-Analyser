@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -263,19 +264,29 @@ class ChangesTab(QWidget):
         collapse_btn.clicked.connect(lambda: window.tree.collapseAll())
         export_btn = QPushButton("Eksport CSV")
         export_btn.clicked.connect(window._export_tree_csv)
+        window.tree_color_metric_combo = QComboBox()
+        window.tree_color_metric_combo.addItem("Koloruj: ilość zmian", "changes")
+        window.tree_color_metric_combo.addItem("Koloruj: % NOK", "nok_pct")
+        window.tree_color_metric_combo.addItem("Koloruj: OEE", "oee")
+        window.tree_color_metric_combo.currentIndexChanged.connect(
+            window._on_tree_color_metric_changed
+        )
         tree_toolbar.addWidget(expand_btn)
         tree_toolbar.addWidget(collapse_btn)
         tree_toolbar.addWidget(export_btn)
+        tree_toolbar.addWidget(window.tree_color_metric_combo)
         tree_toolbar.addStretch(1)
         details_layout.addLayout(tree_toolbar)
 
         window.tree = QTreeWidget()
-        window.tree.setHeaderLabels(["Maszyna / Data", "Zmian", "OK", "NOK", "Szczegóły"])
+        window.tree.setHeaderLabels(["Maszyna / Data", "Zmian", "OK", "NOK", "% NOK", "OEE", "Szczegóły"])
         window.tree.setAlternatingRowColors(True)
         window.tree.setColumnWidth(0, 260)
         window.tree.setColumnWidth(1, 90)
         window.tree.setColumnWidth(2, 75)
         window.tree.setColumnWidth(3, 75)
+        window.tree.setColumnWidth(4, 75)
+        window.tree.setColumnWidth(5, 75)
         window.tree.setStyleSheet(
             """
             QTreeWidget { border: 1px solid #e0e0e0; border-radius: 8px; }

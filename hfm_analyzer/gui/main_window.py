@@ -517,9 +517,12 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
     
         intra_btns = QHBoxLayout()
         intra_btns.setSpacing(6)
+        intra_refresh = QPushButton("Odśwież Intranet")
+        intra_refresh.clicked.connect(self._start_intranet_fetch)
         intra_export = QPushButton("Eksport CSV")
         intra_export.clicked.connect(self._export_intranet_csv)
         intra_btns.addStretch(1)
+        intra_btns.addWidget(intra_refresh)
         intra_btns.addWidget(intra_export)
         intra_layout.addLayout(intra_btns)
     
