@@ -4692,15 +4692,17 @@ class MainWindowHandlers:
                 formatted = formatted.rstrip("0").rstrip(".")
             return formatted or "0"
 
-    def _build_struct_change_events(self, snaps: list[GripSnapshot | HairpinSnapshot]) -> list[dict]:
+    def _build_struct_change_events(
+        self, snaps: list[GripSnapshot | HairpinSnapshot | NestSnapshot]
+    ) -> list[dict]:
             events: list[dict] = []
-            last_state: dict[tuple[str, str], GripSnapshot | HairpinSnapshot] = {}
+            last_state: dict[tuple[str, str], GripSnapshot | HairpinSnapshot | NestSnapshot] = {}
             baseline_done: set[tuple[str, str]] = set()
             idx = 0
             for snap in snaps:
                 idx += 1
                 self._yield_ui(idx)
-                if not isinstance(snap, (GripSnapshot, HairpinSnapshot)):
+                if not isinstance(snap, (GripSnapshot, HairpinSnapshot, NestSnapshot)):
                     continue
                 key = (snap.machine, snap.pin)
                 if key not in baseline_done:
