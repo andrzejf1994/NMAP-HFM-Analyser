@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 from typing import Iterable, List, Tuple
 
 
@@ -169,10 +170,29 @@ def network_path_available(path: str) -> bool:
         return False
 
 
+def sqlite_cache_available(path: str) -> bool:
+    """Return ``True`` when ``path`` exists and can be opened read-only as SQLite."""
+
+    if not path:
+        return False
+    try:
+        if not os.path.exists(path):
+            return False
+    except Exception:
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
 __all__ = [
     "extract_unc_share",
     "list_mapped_network_drives",
     "map_unc_to_drive_if_possible",
     "map_network_drive",
     "network_path_available",
+    "sqlite_cache_available",
 ]

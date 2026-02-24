@@ -1228,21 +1228,31 @@ class RuntimeSQLiteCache:
                 conditions.append(f"m.name IN ({placeholders})")
                 params.extend(machine_list)
         if start_dt is not None:
-            conditions.append("s.ts >= ?")
+            conditions.append("snap.ts >= ?")
             params.append(start_dt.isoformat())
         if end_dt is not None:
-            conditions.append("s.ts <= ?")
+            conditions.append("snap.ts <= ?")
             params.append(end_dt.isoformat())
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         rows = conn.execute(
             """
-            SELECT m.name AS machine, s.ts
-            FROM param_snapshots s
-            JOIN machines m ON s.machine_id = m.id
+            SELECT m.name AS machine, snap.ts
+            FROM (
+                SELECT machine_id, ts FROM param_snapshots
+                UNION
+                SELECT machine_id, ts FROM index_snapshots
+                UNION
+                SELECT machine_id, ts FROM grip_snapshots
+                UNION
+                SELECT machine_id, ts FROM nest_snapshots
+                UNION
+                SELECT machine_id, ts FROM hairpin_snapshots
+            ) snap
+            JOIN machines m ON snap.machine_id = m.id
             """
             + where
             + """
-            GROUP BY m.name, s.ts
+            GROUP BY m.name, snap.ts
             """,
             params,
         )

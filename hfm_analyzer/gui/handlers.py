@@ -393,20 +393,122 @@ class MainWindowHandlers:
                 value = float(default_cycle_time_sec(line_id))
             return value
 
+    def _line_presets(self) -> list[dict]:
+            return [
+                {
+                    "label": "BSG EVO",
+                    "path": DEFAULT_PATH_EVO,
+                    "line_id": 424,
+                    "display_name": "BSG EVO",
+                },
+                {
+                    "label": "BSG H66 2",
+                    "path": DEFAULT_PATH_H66_2,
+                    "line_id": 436,
+                    "display_name": "BSG H66 2",
+                },
+            ]
+
+    def _refresh_line_selector(self) -> None:
+            combo = getattr(self, "line_selector", None)
+            if combo is None:
+                return
+            current_path = self.settings.value("base_path", "", type=str) or ""
+            current_display = self.settings.value("base_path_display_name", "", type=str) or ""
+            try:
+                current_line_id = int(self.settings.value("intranet_line_id", 436, type=int))
+            except Exception:
+                current_line_id = 436
+
+            presets = self._line_presets()
+
+            def _norm_path(path: str) -> str:
+                try:
+                    return os.path.normcase(os.path.normpath(path))
+                except Exception:
+                    return (path or "").strip().lower()
+
+            selected_index = -1
+            combo.blockSignals(True)
+            combo.clear()
+            for preset in presets:
+                combo.addItem(preset["label"], preset)
+            current_norm = _norm_path(current_path)
+            for idx, preset in enumerate(presets):
+                if current_display and current_display.strip().lower() == preset["display_name"].lower():
+                    selected_index = idx
+                    break
+                if int(current_line_id) == int(preset["line_id"]):
+                    selected_index = idx
+                    break
+                if current_norm and _norm_path(preset["path"]) == current_norm:
+                    selected_index = idx
+                    break
+            if selected_index < 0:
+                custom_label = (current_display or current_path or "(nie ustawiono)").strip()
+                custom = {
+                    "label": custom_label,
+                    "path": current_path,
+                    "line_id": current_line_id,
+                    "display_name": current_display.strip(),
+                    "custom": True,
+                }
+                combo.addItem(custom_label, custom)
+                selected_index = combo.count() - 1
+            combo.setCurrentIndex(selected_index)
+            try:
+                combo.setToolTip(current_path)
+            except Exception:
+                pass
+            combo.blockSignals(False)
+
+    def _on_line_selector_changed(self, index: int) -> None:
+            combo = getattr(self, "line_selector", None)
+            if combo is None:
+                return
+            if index < 0 or index >= combo.count():
+                return
+            data = combo.itemData(index)
+            if not isinstance(data, dict):
+                return
+            new_path = (data.get("path") or "").strip()
+            new_display = (data.get("display_name") or "").strip()
+            new_line_id = data.get("line_id", None)
+
+            old_path = self.settings.value("base_path", "", type=str)
+            old_display = self.settings.value("base_path_display_name", "", type=str)
+            old_line_id = self.settings.value("intranet_line_id", 436, type=int)
+
+            if new_path:
+                self.settings.setValue("base_path", new_path)
+            if new_display:
+                self.settings.setValue("base_path_display_name", new_display)
+            elif old_display:
+                self.settings.setValue("base_path_display_name", "")
+            if new_line_id is not None:
+                try:
+                    self.settings.setValue("intranet_line_id", int(new_line_id))
+                except Exception:
+                    pass
+
+            new_line_id_val = self.settings.value("intranet_line_id", 436, type=int)
+            new_path_val = self.settings.value("base_path", "", type=str)
+            if new_path_val != old_path or new_line_id_val != old_line_id:
+                self._reset_results_state(clear_found_files=True)
+            self._refresh_base_path_label()
+            self._populate_machines()
+
     def _refresh_base_path_label(self):
-            base_path = self.settings.value("base_path", "", type=str)
-            display_name = self.settings.value("base_path_display_name", "", type=str)
-            display_name = display_name.strip()
-            if display_name:
-                disp = display_name
-            elif base_path:
-                disp = base_path
-            else:
-                disp = "(nie ustawiono)"
-            if self._is_offline_cache_mode():
-                self.base_path_label.setText(f"Linia: <b>{disp}</b> (offline)")
-            else:
-                self.base_path_label.setText(f"Linia: <b>{disp}</b>")
+            try:
+                self._refresh_line_selector()
+            except Exception:
+                pass
+            status_label = getattr(self, "line_status_label", None)
+            if status_label is not None:
+                try:
+                    status_label.setText("(offline)" if self._is_offline_cache_mode() else "")
+                except Exception:
+                    pass
 
     def _get_base_path(self) -> str:
             return self.settings.value("base_path", "", type=str)
@@ -2470,6 +2572,7 @@ class MainWindowHandlers:
                 self._param_card_index_lookup = {}
                 self._param_card_grip_lookup = {}
                 self._param_card_nest_lookup = {}
+                self._param_card_nest_lookup_by_pin = {}
                 self._param_card_hairpin_lookup = {}
             except Exception:
                 pass
@@ -3572,18 +3675,20 @@ class MainWindowHandlers:
                         text = str(key or '').strip()
                         if text:
                             keys.add(text)
-            else:
-                cache = getattr(self, "runtime_cache", None)
-                if isinstance(cache, RuntimeSQLiteCache):
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                try:
                     keys.update(cache.fetch_struct_value_keys("nest"))
-                else:
-                    for snap in getattr(self, 'nest_snapshots', []):
-                        if not isinstance(snap, NestSnapshot):
-                            continue
-                        for key in getattr(snap, 'values', {}).keys():
-                            text = str(key or '').strip()
-                            if text:
-                                keys.add(text)
+                except Exception:
+                    pass
+            else:
+                for snap in getattr(self, 'nest_snapshots', []):
+                    if not isinstance(snap, NestSnapshot):
+                        continue
+                    for key in getattr(snap, 'values', {}).keys():
+                        text = str(key or '').strip()
+                        if text:
+                            keys.add(text)
             ordered: list[str] = []
             for key in NEST_PARAM_ORDER:
                 if key in keys:
@@ -3602,18 +3707,20 @@ class MainWindowHandlers:
                         text = str(key or '').strip()
                         if text:
                             keys.add(text)
-            else:
-                cache = getattr(self, "runtime_cache", None)
-                if isinstance(cache, RuntimeSQLiteCache):
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                try:
                     keys.update(cache.fetch_struct_value_keys("hairpin"))
-                else:
-                    for snap in getattr(self, 'hairpin_snapshots', []):
-                        if not isinstance(snap, HairpinSnapshot):
-                            continue
-                        for key in getattr(snap, 'values', {}).keys():
-                            text = str(key or '').strip()
-                            if text:
-                                keys.add(text)
+                except Exception:
+                    pass
+            else:
+                for snap in getattr(self, 'hairpin_snapshots', []):
+                    if not isinstance(snap, HairpinSnapshot):
+                        continue
+                    for key in getattr(snap, 'values', {}).keys():
+                        text = str(key or '').strip()
+                        if text:
+                            keys.add(text)
             normalized: dict[str, str] = {}
             for source in keys:
                 if source in HAIRPIN_PARAM_EXCLUDE:
@@ -4151,20 +4258,20 @@ class MainWindowHandlers:
                     if isinstance(cache, RuntimeSQLiteCache):
                         snaps = cache.fetch_param_snapshots(machine=machine_key, dt=dt)
                     else:
-                        machine_map = groups.get(machine_key, {})
-                        snaps = list(machine_map.get(dt, []))
+                        snaps = []
                 except Exception:
                     snaps = []
             self._param_card_index_lookup = {}
             self._param_card_grip_lookup = {}
             self._param_card_nest_lookup = {}
+            self._param_card_nest_lookup_by_pin = {}
             self._param_card_hairpin_lookup = {}
             self.current_param_card_rows = snaps
             self.param_card_selection = (dt, machine) if snaps else None
             export_btn = getattr(self, 'param_card_export_btn', None)
             if export_btn is not None:
                 export_btn.setEnabled(bool(snaps))
-            if snaps and dt is not None and machine is not None:
+            if dt is not None and machine is not None:
                 machine_norm = (machine or '').strip()
                 try:
                     index_lookup: dict[tuple[str, str, int], IndexSnapshot] = {}
@@ -4196,17 +4303,22 @@ class MainWindowHandlers:
                     self._param_card_grip_lookup = {}
                 try:
                     nest_lookup: dict[tuple[str, str], NestSnapshot] = {}
+                    nest_lookup_by_pin: dict[str, NestSnapshot] = {}
                     for nest_snap in self._fetch_struct_snapshots("nest", machine=machine_norm, dt=dt):
                         if not isinstance(nest_snap, NestSnapshot):
                             continue
-                        key = (
-                            (nest_snap.program or '').strip(),
-                            (nest_snap.pin or '').strip(),
-                        )
+                        program_key = (nest_snap.program or '').strip()
+                        pin_key = (nest_snap.pin or '').strip()
+                        pin_norm = pin_key.lower()
+                        key = (program_key, pin_key)
                         nest_lookup[key] = nest_snap
+                        if pin_norm and pin_norm not in nest_lookup_by_pin:
+                            nest_lookup_by_pin[pin_norm] = nest_snap
                     self._param_card_nest_lookup = nest_lookup
+                    self._param_card_nest_lookup_by_pin = nest_lookup_by_pin
                 except Exception:
                     self._param_card_nest_lookup = {}
+                    self._param_card_nest_lookup_by_pin = {}
                 try:
                     hairpin_lookup: dict[tuple[str, str], HairpinSnapshot] = {}
                     for hair_snap in self._fetch_struct_snapshots("hairpin", machine=machine_norm, dt=dt):
@@ -4220,7 +4332,96 @@ class MainWindowHandlers:
                     self._param_card_hairpin_lookup = hairpin_lookup
                 except Exception:
                     self._param_card_hairpin_lookup = {}
+            if not snaps and dt is not None and machine is not None:
+                synthetic_rows: list[ParamSnapshot] = []
+                seen_rows: set[tuple[str, str, str, int | None]] = set()
+                for (program, table_name, step_value), idx_snap in (self._param_card_index_lookup or {}).items():
+                    key = (program, table_name, "", step_value)
+                    if key in seen_rows:
+                        continue
+                    seen_rows.add(key)
+                    synthetic_rows.append(
+                        ParamSnapshot(
+                            dt=dt,
+                            machine=machine,
+                            program=program,
+                            table=table_name,
+                            pin="",
+                            step=step_value if step_value != -1 else None,
+                            values={},
+                            included={},
+                            modes={},
+                            path=getattr(idx_snap, "path", ""),
+                        )
+                    )
+                struct_sources = (
+                    self._param_card_grip_lookup or {},
+                    self._param_card_nest_lookup or {},
+                    self._param_card_hairpin_lookup or {},
+                )
+                for source in struct_sources:
+                    for (program, pin), struct_snap in source.items():
+                        existing_key = None
+                        for candidate in seen_rows:
+                            if candidate[0] == program and candidate[2] == pin:
+                                existing_key = candidate
+                                break
+                        if existing_key is not None:
+                            continue
+                        key = (program, "", pin, None)
+                        if key in seen_rows:
+                            continue
+                        seen_rows.add(key)
+                        synthetic_rows.append(
+                            ParamSnapshot(
+                                dt=dt,
+                                machine=machine,
+                                program=program,
+                                table="",
+                                pin=pin,
+                                step=None,
+                                values={},
+                                included={},
+                                modes={},
+                                path=getattr(struct_snap, "path", ""),
+                            )
+                        )
+                snaps = synthetic_rows
+                self.current_param_card_rows = snaps
+                self.param_card_selection = (dt, machine) if snaps else None
+                if export_btn is not None:
+                    export_btn.setEnabled(bool(snaps))
             self._update_param_card_table(snaps)
+
+    def _param_card_header_labels(self, value_names: list[str]) -> list[str]:
+            index_labels = [
+                "Index",
+                "Compactor vertical",
+                "Expansion vertical",
+                "Insertion transversal",
+                "Insertion horizontal",
+                "Funnel transversal",
+                "Funnel horizontal",
+                "Inner containment",
+                "Outer containment",
+                "Override",
+            ]
+            index_map = dict(zip(INDEX_PARAM_DISPLAY_ORDER, index_labels))
+            hairpin_labels = [
+                "Initial leg length",
+                "Final leg length",
+                "Stripping end offset",
+                "Stripping end length",
+                "Stripping start offset",
+                "Stripping start length",
+                "Hairpin length",
+            ]
+            hairpin_map = dict(zip(HAIRPIN_PARAM_ORDER, hairpin_labels))
+            labels: list[str] = []
+            for name in value_names:
+                label = index_map.get(name) or hairpin_map.get(name) or name
+                labels.append(label)
+            return labels
 
     def _update_param_card_table(self, snaps: list[ParamSnapshot] | None) -> None:
             table = getattr(self, 'param_card_table', None)
@@ -4306,6 +4507,28 @@ class MainWindowHandlers:
             text = self._format_struct_value(value)
             return "" if text == "(brak)" else text
 
+    def _param_card_find_struct_snapshot(
+        self,
+        lookup: dict[tuple[str, str], GripSnapshot | NestSnapshot | HairpinSnapshot],
+        *,
+        program_key: str,
+        pin_key: str,
+    ) -> GripSnapshot | NestSnapshot | HairpinSnapshot | None:
+            direct = lookup.get((program_key, pin_key))
+            if direct is not None:
+                return direct
+            pin_norm = (pin_key or "").strip().lower()
+            if pin_norm:
+                pin_matches = [snap for (program, pin), snap in lookup.items() if pin.strip().lower() == pin_norm]
+                if len(pin_matches) == 1:
+                    return pin_matches[0]
+            program_matches = [snap for (program, _), snap in lookup.items() if program == program_key]
+            if len(program_matches) == 1:
+                return program_matches[0]
+            if len(lookup) == 1:
+                return next(iter(lookup.values()))
+            return None
+
     def _param_card_cell_text(self, snap: ParamSnapshot, name: str) -> str:
             if name in PARAM_DISPLAY_ORDER:
                 if name == STEP_SPEED_LABEL:
@@ -4369,21 +4592,33 @@ class MainWindowHandlers:
 
             if name in GRIP_PARAM_ORDER:
                 lookup = getattr(self, '_param_card_grip_lookup', {}) or {}
-                struct_snap = lookup.get((program_key, pin_key))
+                struct_snap = self._param_card_find_struct_snapshot(
+                    lookup,
+                    program_key=program_key,
+                    pin_key=pin_key,
+                )
                 if not struct_snap:
                     return ""
                 return self._param_card_struct_text(struct_snap.values.get(name, ''))
 
             if name in NEST_PARAM_ORDER:
                 lookup = getattr(self, '_param_card_nest_lookup', {}) or {}
-                struct_snap = lookup.get((program_key, pin_key))
+                struct_snap = self._param_card_find_struct_snapshot(
+                    lookup,
+                    program_key=program_key,
+                    pin_key=pin_key,
+                )
                 if not struct_snap:
                     return ""
                 return self._param_card_struct_text(struct_snap.values.get(name, ''))
 
             if name in HAIRPIN_PARAM_ORDER:
                 lookup = getattr(self, '_param_card_hairpin_lookup', {}) or {}
-                struct_snap = lookup.get((program_key, pin_key))
+                struct_snap = self._param_card_find_struct_snapshot(
+                    lookup,
+                    program_key=program_key,
+                    pin_key=pin_key,
+                )
                 if not struct_snap:
                     return ""
                 value = struct_snap.values.get(name)
@@ -5867,7 +6102,11 @@ class MainWindowHandlers:
                             w.writerow(["Pliki", len(paths), "Przykład", paths[0]])
                     w.writerow([])
                     value_names = list(getattr(self, 'param_card_value_names', list(PARAM_DISPLAY_ORDER)))
-                    csv_headers = ["Program", "Tabela", "Pin", "Step"] + value_names
+                    try:
+                        header_labels = self._param_card_header_labels(value_names)
+                    except Exception:
+                        header_labels = list(value_names)
+                    csv_headers = ["Program", "Table", "Pin", "Step"] + header_labels
                     w.writerow(csv_headers)
                     try:
                         sorted_snaps = sorted(

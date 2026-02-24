@@ -12,8 +12,8 @@ from PyQt5.QtGui import QColor, QPalette, QIcon
 from PyQt5.QtWidgets import QApplication
 
 from hfm_analyzer.constants import APP_NAME, APP_ORG, DEFAULT_PATH_H66_2
-from hfm_analyzer.gui import ModernMainWindow, NetworkCheckDialog
-from hfm_analyzer.utils import network_path_available
+from hfm_analyzer.gui import CacheCheckDialog, ModernMainWindow, NetworkCheckDialog
+from hfm_analyzer.utils import network_path_available, sqlite_cache_available
 
 
 def ensure_base_path(settings: QSettings) -> bool:
@@ -24,24 +24,34 @@ def ensure_base_path(settings: QSettings) -> bool:
         settings.setValue("base_path", DEFAULT_PATH_H66_2)
         base_path = DEFAULT_PATH_H66_2
 
-    if network_path_available(base_path):
-        return True
+    while True:
+        try:
+            offline = bool(settings.value("offline_cache_mode", False, type=bool))
+        except Exception:
+            offline = False
 
-    try:
-        if settings.value("offline_cache_mode", False, type=bool):
-            return True
-    except Exception:
-        pass
+        if offline:
+            try:
+                persistent = bool(settings.value("cache_persistent", False, type=bool))
+            except Exception:
+                persistent = False
+            cache_path = settings.value("cache_path", "", type=str)
+            if persistent and sqlite_cache_available(cache_path):
+                return True
+            dialog = CacheCheckDialog(settings)
+            if dialog.exec_() != dialog.Accepted:
+                return False
+            base_path = settings.value("base_path", "", type=str)
+            continue
 
-    dialog = NetworkCheckDialog(settings)
-    result = dialog.exec_()
-    try:
-        if settings.value("offline_cache_mode", False, type=bool):
+        if network_path_available(base_path):
             return True
-    except Exception:
-        pass
-    new_path = settings.value("base_path", "", type=str)
-    return result == dialog.Accepted and network_path_available(new_path)
+
+        dialog = NetworkCheckDialog(settings)
+        result = dialog.exec_()
+        base_path = settings.value("base_path", "", type=str)
+        if result != dialog.Accepted:
+            return False
 
 
 def apply_fusion_palette(app: QApplication) -> None:

@@ -708,6 +708,33 @@ class AnalyzeWorker(QThread):
         _parse_struct_array(
             hairpin_struct,
             "aHairPinType",
+            nest_records,
+            NestSnapshot,
+            pin_map,
+            NEST_PARAM_FIELDS,
+        )
+        if nest_records:
+            merged_nest: dict[tuple[str, str, datetime, str, str], NestSnapshot] = {}
+            for snap in nest_records:
+                key = (snap.program, snap.pin, snap.dt, snap.machine, snap.path)
+                existing = merged_nest.get(key)
+                if existing is None:
+                    merged_nest[key] = NestSnapshot(
+                        dt=snap.dt,
+                        machine=snap.machine,
+                        program=snap.program,
+                        pin=snap.pin,
+                        values=dict(snap.values),
+                        path=snap.path,
+                    )
+                    continue
+                for field_name, field_value in snap.values.items():
+                    if field_value not in (None, ""):
+                        existing.values[field_name] = field_value
+            nest_records = list(merged_nest.values())
+        _parse_struct_array(
+            hairpin_struct,
+            "aHairPinType",
             hairpin_records,
             HairpinSnapshot,
             pin_map,

@@ -17,6 +17,8 @@ GRIP_PARAM_FIELDS: OrderedDict[str, str] = OrderedDict(
 
 NEST_PARAM_FIELDS: OrderedDict[str, str] = OrderedDict(
     [
+        ("r64GambaIniz", "INITIAL LEG LENGTH"),
+        ("r64GambaFinale", "FINAL LEG LENGTH"),
         ("r64QuotaTraslazioneCestello", "TRANSLATION 1ST LEG"),
         ("r64QuotaTraslCestello2ndLeg", "TRANSLATION 2ND LEG"),
         ("r64QuotaTrasversaleCestello", "TRANSVERSAL 1ST LEG"),
