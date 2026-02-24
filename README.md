@@ -8,3 +8,5 @@ Uruchamianie lokalne:
 
 Dokumentacja użytkownika:
 - [docs/USER_GUIDE_PL.md](docs/USER_GUIDE_PL.md)
+
+- [docs/KOD_WYJASNIENIE_PL.md](docs/KOD_WYJASNIENIE_PL.md) — opis plików, funkcji i zakresów linii.
