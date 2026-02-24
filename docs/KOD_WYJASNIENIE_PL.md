@@ -1,429 +1,1790 @@
 # Szczegółowy opis kodu (PL)
 
-Dokument opisuje **każdy plik Python** oraz **każdą funkcję/metodę** wraz z zakresem linii. Dzięki numerom linii można przejść przez kod krok po kroku nawet bez znajomości projektu.
-
-## Jak czytać „linijka po linijce”
-- Otwórz wskazany plik i przejdź do podanego zakresu `Lx-Ly`.
-- W pierwszych liniach funkcji zwykle jest walidacja wejścia i przygotowanie danych.
-- Środkowa część realizuje logikę biznesową (parsowanie, filtrowanie, agregacje, aktualizacja GUI).
-- Końcowe linie zwracają wynik, zapisują dane do cache lub odświeżają widok.
-- Dla dużych metod (np. `MainWindowHandlers`) czytaj po blokach nazwanych komentarzami i wywołaniami pomocniczych metod.
+Dokument został przygotowany od nowa i opisuje każdy moduł oraz każdą funkcję/metodę na podstawie realnej analizy AST kodu źródłowego.
 
 ## Plik: `hfm_analyzer/__init__.py`
-- **Rola pliku:** Plik inicjalizacyjny pakietu.
-- **Elementy kodu:** brak jawnych funkcji/klas; plik zawiera głównie stałe, importy lub inicjalizację pakietu.
+- **Rola modułu:** Package exposing the main GUI components for the HFM Analyzer.
+- **Elementy:** brak jawnych klas/funkcji (stałe/importy/inicjalizacja).
 
 ## Plik: `hfm_analyzer/app.py`
-- **Rola pliku:** Uruchamianie aplikacji Qt: konfiguracja ścieżek, stylu i głównego okna.
-- **Elementy kodu (z zakresem linii):**
-  - `Funkcja `ensure_base_path()`` — linie **19-54**. Funkcja/metoda realizuje krok związany z: „ensure base path”.
-  - `Funkcja `apply_fusion_palette()`` — linie **57-72**. Funkcja/metoda realizuje krok związany z: „apply fusion palette”.
-  - `Funkcja `_icon_search_paths()`` — linie **75-114**. Funkcja/metoda realizuje krok związany z: „icon search paths”.
-  - `Funkcja `_load_app_icon()`` — linie **117-124**. Funkcja/metoda realizuje krok związany z: „load app icon”.
-  - `Funkcja `main()`` — linie **127-161**. Funkcja/metoda realizuje krok związany z: „main”.
+- **Rola modułu:** Application entrypoint for the HFM Analyzer GUI.
+- **Elementy i działanie:**
+  - `Funkcja ensure_base_path()` — linie **19-54**.
+    - Przyjmuje parametry: `settings`.
+    - Buduje/aktualizuje kluczowe zmienne: `base_path`, `dialog`, `result`, `offline`, `cache_path`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not base_path`; `offline`; `network_path_available(base_path)`.
+    - Iteruje po danych w pętlach typu: `while True`.
+    - Wykonuje najważniejsze wywołania: `settings.value()`, `settings.setValue()`, `network_path_available()`, `NetworkCheckDialog()`, `dialog.exec_()`, `bool()`.
+    - Zwraca m.in.: `True` / `False`.
+  - `Funkcja apply_fusion_palette()` — linie **57-72**.
+    - Przyjmuje parametry: `app`.
+    - Buduje/aktualizuje kluczowe zmienne: `palette`.
+    - Wykonuje najważniejsze wywołania: `app.setStyle()`, `app.palette()`, `palette.setColor()`, `app.setPalette()`, `QColor()`.
+    - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+  - `Funkcja _icon_search_paths()` — linie **75-114**.
+    - Buduje/aktualizuje kluczowe zmienne: `candidates`, `meipass`, `here`, `ordered_unique`, `seen`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `meipass`; `resolved in seen`.
+    - Iteruje po danych w pętlach typu: `for candidate in candidates`.
+    - Wykonuje najważniejsze wywołania: `getattr()`, `candidates.append()`, `set()`, `Path()`, `Path(__file__).resolve()`, `seen.add()`.
+    - Zwraca m.in.: `ordered_unique`.
+  - `Funkcja _load_app_icon()` — linie **117-124**.
+    - Podejmuje decyzje m.in. na podstawie warunków: `path.is_file()`.
+    - Iteruje po danych w pętlach typu: `for path in _icon_search_paths()`.
+    - Wykonuje najważniejsze wywołania: `_icon_search_paths()`, `logging.warning()`, `path.is_file()`, `QIcon()`, `str()`.
+    - Zwraca m.in.: `None` / `QIcon(str(path))`.
+  - `Funkcja main()` — linie **127-161**.
+    - Buduje/aktualizuje kluczowe zmienne: `app`, `icon`, `settings`, `window`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `icon and (not icon.isNull())`; `not ensure_base_path(settings)`.
+    - Wykonuje najważniejsze wywołania: `logging.basicConfig()`, `QApplication()`, `app.setOrganizationName()`, `app.setApplicationName()`, `_load_app_icon()`, `apply_fusion_palette()`.
+    - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
 
 ## Plik: `hfm_analyzer/constants.py`
-- **Rola pliku:** Stałe aplikacji i domyślne parametry.
-- **Elementy kodu (z zakresem linii):**
-  - `Funkcja `default_cycle_time_sec()`` — linie **16-21**. Funkcja/metoda realizuje krok związany z: „default cycle time sec”.
+- **Rola modułu:** Application-wide constants for the HFM Analyzer GUI.
+- **Elementy i działanie:**
+  - `Funkcja default_cycle_time_sec()` — linie **16-21**.
+    - Przyjmuje parametry: `line_id`.
+    - Buduje/aktualizuje kluczowe zmienne: `lid`.
+    - Wykonuje najważniejsze wywołania: `int()`, `DEFAULT_CYCLE_TIME_BY_LINE_ID.get()`.
+    - Zwraca m.in.: `int(DEFAULT_CYCLE_TIME_BY_LINE_ID.get(lid, DEFAULT_CYCLE_TIME_SEC))`.
 
 ## Plik: `hfm_analyzer/data_labels.py`
-- **Rola pliku:** Słowniki/etykiety mapujące nazwy techniczne na opisy dla UI.
-- **Elementy kodu:** brak jawnych funkcji/klas; plik zawiera głównie stałe, importy lub inicjalizację pakietu.
+- **Rola modułu:** Structured label mappings for parsed XML data.
+- **Elementy:** brak jawnych klas/funkcji (stałe/importy/inicjalizacja).
 
 ## Plik: `hfm_analyzer/gui/__init__.py`
-- **Rola pliku:** Plik inicjalizacyjny pakietu.
-- **Elementy kodu:** brak jawnych funkcji/klas; plik zawiera głównie stałe, importy lub inicjalizację pakietu.
+- **Rola modułu:** GUI package exposing the main window and related components.
+- **Elementy:** brak jawnych klas/funkcji (stałe/importy/inicjalizacja).
 
 ## Plik: `hfm_analyzer/gui/dialogs.py`
-- **Rola pliku:** Okna dialogowe ustawień oraz sprawdzania dostępności zasobów i cache.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `_PathCheckWorker`` — linie **36-45**. Klasa odpowiedzialna za obszar: „PathCheckWorker”.
-  - `  - Metoda `_PathCheckWorker.__init__()`` — linie **39-41**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `_PathCheckWorker.run()`` — linie **43-45**. Funkcja/metoda realizuje krok związany z: „run”.
-  - `Klasa `SettingsDialog`` — linie **47-396**. Klasa odpowiedzialna za obszar: „SettingsDialog”.
-  - `  - Metoda `SettingsDialog.__init__()`` — linie **50-187**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `SettingsDialog._on_path_text_changed()`` — linie **189-192**. Funkcja/metoda realizuje krok związany z: „on path text changed”.
-  - `  - Metoda `SettingsDialog._cycle_time_key()`` — linie **194-195**. Funkcja/metoda realizuje krok związany z: „cycle time key”.
-  - `  - Metoda `SettingsDialog._cycle_time_for_line()`` — linie **197-199**. Funkcja/metoda realizuje krok związany z: „cycle time for line”.
-  - `  - Metoda `SettingsDialog._on_line_id_changed()`` — linie **201-209**. Funkcja/metoda realizuje krok związany z: „on line id changed”.
-  - `  - Metoda `SettingsDialog._apply_path()`` — linie **211-218**. Funkcja/metoda realizuje krok związany z: „apply path”.
-  - `  - Metoda `SettingsDialog._set_path()`` — linie **220-225**. Funkcja/metoda realizuje krok związany z: „set path”.
-  - `  - Metoda `SettingsDialog._browse()`` — linie **227-230**. Funkcja/metoda realizuje krok związany z: „browse”.
-  - `  - Metoda `SettingsDialog._browse_cache_path()`` — linie **232-244**. Funkcja/metoda realizuje krok związany z: „browse cache path”.
-  - `  - Metoda `SettingsDialog._default_cache_path()`` — linie **246-263**. Funkcja/metoda realizuje krok związany z: „default cache path”.
-  - `  - Metoda `SettingsDialog._set_offline_preset()`` — linie **265-276**. Funkcja/metoda realizuje krok związany z: „set offline preset”.
-  - `  - Metoda `SettingsDialog._on_persistent_toggled()`` — linie **278-288**. Funkcja/metoda realizuje krok związany z: „on persistent toggled”.
-  - `  - Metoda `SettingsDialog._on_offline_toggled()`` — linie **290-302**. Funkcja/metoda realizuje krok związany z: „on offline toggled”.
-  - `  - Metoda `SettingsDialog._clear_cache()`` — linie **304-335**. Funkcja/metoda realizuje krok związany z: „clear cache”.
-  - `  - Metoda `SettingsDialog._accept()`` — linie **337-396**. Funkcja/metoda realizuje krok związany z: „accept”.
-  - `Klasa `NetworkCheckDialog`` — linie **398-597**. Klasa odpowiedzialna za obszar: „NetworkCheckDialog”.
-  - `  - Metoda `NetworkCheckDialog.__init__()`` — linie **401-465**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `NetworkCheckDialog._apply_styles()`` — linie **467-473**. Funkcja/metoda realizuje krok związany z: „apply styles”.
-  - `  - Metoda `NetworkCheckDialog._update_label()`` — linie **475-477**. Funkcja/metoda realizuje krok związany z: „update label”.
-  - `  - Metoda `NetworkCheckDialog._choose_path()`` — linie **479-482**. Funkcja/metoda realizuje krok związany z: „choose path”.
-  - `  - Metoda `NetworkCheckDialog._set_path()`` — linie **484-497**. Funkcja/metoda realizuje krok związany z: „set path”.
-  - `  - Metoda `NetworkCheckDialog._on_retry()`` — linie **499-500**. Funkcja/metoda realizuje krok związany z: „on retry”.
-  - `  - Metoda `NetworkCheckDialog._set_controls_enabled()`` — linie **502-513**. Funkcja/metoda realizuje krok związany z: „set controls enabled”.
-  - `  - Metoda `NetworkCheckDialog._start_path_check()`` — linie **515-536**. Funkcja/metoda realizuje krok związany z: „start path check”.
-  - `  - Metoda `NetworkCheckDialog._on_path_check_finished()`` — linie **538-553**. Funkcja/metoda realizuje krok związany z: „on path check finished”.
-  - `  - Metoda `NetworkCheckDialog._offline_cache_available()`` — linie **555-583**. Funkcja/metoda realizuje krok związany z: „offline cache available”.
-  - `  - Metoda `NetworkCheckDialog._use_offline_cache()`` — linie **585-597**. Funkcja/metoda realizuje krok związany z: „use offline cache”.
-  - `Klasa `CacheCheckDialog`` — linie **601-714**. Klasa odpowiedzialna za obszar: „CacheCheckDialog”.
-  - `  - Metoda `CacheCheckDialog.__init__()`` — linie **604-651**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `CacheCheckDialog._apply_styles()`` — linie **653-659**. Funkcja/metoda realizuje krok związany z: „apply styles”.
-  - `  - Metoda `CacheCheckDialog._update_label()`` — linie **661-665**. Funkcja/metoda realizuje krok związany z: „update label”.
-  - `  - Metoda `CacheCheckDialog._cache_available()`` — linie **667-675**. Funkcja/metoda realizuje krok związany z: „cache available”.
-  - `  - Metoda `CacheCheckDialog._on_retry()`` — linie **677-682**. Funkcja/metoda realizuje krok związany z: „on retry”.
-  - `  - Metoda `CacheCheckDialog._choose_cache()`` — linie **684-707**. Funkcja/metoda realizuje krok związany z: „choose cache”.
-  - `  - Metoda `CacheCheckDialog._use_online()`` — linie **709-714**. Funkcja/metoda realizuje krok związany z: „use online”.
+- **Rola modułu:** Dialog implementations for the GUI package.
+- **Elementy i działanie:**
+  - `Klasa _PathCheckWorker` — linie **36-45**.
+    - `Metoda _PathCheckWorker.__init__()` — linie **39-41**.
+      - Przyjmuje parametry: `path`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._path`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda _PathCheckWorker.run()` — linie **43-45**.
+      - Buduje/aktualizuje kluczowe zmienne: `available`.
+      - Wykonuje najważniejsze wywołania: `network_path_available()`, `self.finished.emit()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+  - `Klasa SettingsDialog` — linie **47-396**.
+    - Odpowiedzialność klasy: Application preferences dialog..
+    - `Metoda SettingsDialog.__init__()` — linie **50-187**.
+      - Przyjmuje parametry: `settings`, `parent`, `runtime_db_path`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.settings`, `initial_path`, `self._block_path_signal`, `self.path_edit`, `self._pending_display_name`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not excl_val`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self.setWindowTitle()`, `self.settings.value()`, `QLineEdit()`, `self.path_edit.text().strip()`, `self.path_edit.textChanged.connect()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._on_path_text_changed()` — linie **189-192**.
+      - Przyjmuje parametry: `_`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._pending_display_name`, `self._last_checked_path`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not getattr(self, '_block_path_signal', False)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._cycle_time_key()` — linie **194-195**.
+      - Przyjmuje parametry: `line_id`.
+      - Wykonuje najważniejsze wywołania: `int()`.
+      - Zwraca m.in.: `f'cycle_time_sec_line_{int(line_id)}'`.
+    - `Metoda SettingsDialog._cycle_time_for_line()` — linie **197-199**.
+      - Przyjmuje parametry: `line_id`.
+      - Buduje/aktualizuje kluczowe zmienne: `key`.
+      - Wykonuje najważniejsze wywołania: `self._cycle_time_key()`, `int()`, `self.settings.value()`, `default_cycle_time_sec()`.
+      - Zwraca m.in.: `int(self.settings.value(key, default_cycle_time_sec(line_id), type=int))`.
+    - `Metoda SettingsDialog._on_line_id_changed()` — linie **201-209**.
+      - Przyjmuje parametry: `value`.
+      - Buduje/aktualizuje kluczowe zmienne: `prev_line_id`, `self._cycle_time_by_line_local[prev_line_id]`, `self._current_cycle_line_id`, `next_value`.
+      - Wykonuje najważniejsze wywołania: `int()`, `self._cycle_time_by_line_local.get()`, `self.cycle_time_spin.setValue()`, `getattr()`, `self.cycle_time_spin.value()`, `self._cycle_time_for_line()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._apply_path()` — linie **211-218**.
+      - Przyjmuje parametry: `path`, `display_name`.
+      - Buduje/aktualizuje kluczowe zmienne: `mapped`, `self._pending_display_name`, `self._block_path_signal`, `self._last_checked_path`.
+      - Wykonuje najważniejsze wywołania: `_maybe_offer_drive_mapping(self, path).strip()`, `self.path_edit.setText()`, `_maybe_offer_drive_mapping()`.
+      - Zwraca m.in.: `mapped`.
+    - `Metoda SettingsDialog._set_path()` — linie **220-225**.
+      - Przyjmuje parametry: `path`, `line_id`, `display_name`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `line_id is not None`.
+      - Wykonuje najważniejsze wywołania: `self._apply_path()`, `self.line_id_spin.setValue()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._browse()` — linie **227-230**.
+      - Buduje/aktualizuje kluczowe zmienne: `new_path`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `new_path`.
+      - Wykonuje najważniejsze wywołania: `QFileDialog.getExistingDirectory()`, `self._apply_path()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._browse_cache_path()` — linie **232-244**.
+      - Buduje/aktualizuje kluczowe zmienne: `(path, _)`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `path`.
+      - Wykonuje najważniejsze wywołania: `QFileDialog.getSaveFileName()`, `self.cache_path_edit.setText()`, `self.cache_path_edit.text().strip()`, `self._default_cache_path()`, `self.persistent_check.setChecked()`, `self.cache_path_edit.text()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._default_cache_path()` — linie **246-263**.
+      - Buduje/aktualizuje kluczowe zmienne: `base`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not base`; `base`.
+      - Wykonuje najważniejsze wywołania: `QStandardPaths.writableLocation()`, `os.path.join()`, `os.makedirs()`, `os.path.expanduser()`.
+      - Zwraca m.in.: `'hfm_analyzer_cache.sqlite'` / `os.path.join(base, 'hfm_analyzer_cache.sqlite')`.
+    - `Metoda SettingsDialog._set_offline_preset()` — linie **265-276**.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self.cache_path_edit.text().strip()`.
+      - Wykonuje najważniejsze wywołania: `self.offline_check.setChecked()`, `self.persistent_check.setChecked()`, `self._on_persistent_toggled()`, `self.cache_path_edit.text().strip()`, `self.cache_path_edit.setText()`, `QMessageBox.information()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._on_persistent_toggled()` — linie **278-288**.
+      - Przyjmuje parametry: `checked`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not checked`.
+      - Wykonuje najważniejsze wywołania: `self.cache_path_edit.setEnabled()`, `self.cache_browse_btn.setEnabled()`, `self.cache_keep_days_spin.setEnabled()`, `self.cache_clear_btn.setEnabled()`, `self.offline_check.setEnabled()`, `self.offline_check.setChecked()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda SettingsDialog._on_offline_toggled()` — linie **290-302**.
+      - Przyjmuje parametry: `checked`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not checked`; `not self.persistent_check.isChecked()`; `not self.cache_path_edit.text().strip()`.
+      - Wykonuje najważniejsze wywołania: `self.persistent_check.isChecked()`, `self.persistent_check.setChecked()`, `self.cache_path_edit.text().strip()`, `self.cache_path_edit.setText()`, `QMessageBox.information()`, `self._default_cache_path()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda SettingsDialog._clear_cache()` — linie **304-335**.
+      - Buduje/aktualizuje kluczowe zmienne: `path`, `keep_days`, `cutoff_date`, `cutoff_dt`, `msg`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self.persistent_check.isChecked()`; `not path`; `QMessageBox.question(self, 'Potwierdź czyszczenie', msg, QMessageBox.Yes |…`.
+      - Wykonuje najważniejsze wywołania: `self.cache_path_edit.text().strip()`, `int()`, `datetime.combine()`, `self.persistent_check.isChecked()`, `QMessageBox.information()`, `QMessageBox.warning()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda SettingsDialog._accept()` — linie **337-396**.
+      - Buduje/aktualizuje kluczowe zmienne: `current`, `display_name`, `self._cycle_time_by_line_local[int(self.line_id_spin.value())]`, `persistent`, `cache_path`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `current and current != self._last_checked_path`; `persistent and (not cache_path)`; `persistent and cache_path`.
+      - Iteruje po danych w pętlach typu: `for (line_id, cycle_sec) in self._cycle_time_by_line_local.items()`.
+      - Wykonuje najważniejsze wywołania: `self.path_edit.text().strip()`, `self.settings.setValue()`, `int()`, `self._cycle_time_by_line_local.items()`, `bool()`, `self.cache_path_edit.text().strip()`.
+      - Zwraca m.in.: `None`.
+  - `Klasa NetworkCheckDialog` — linie **398-597**.
+    - Odpowiedzialność klasy: Dialog displayed when the network path is unavailable..
+    - `Metoda NetworkCheckDialog.__init__()` — linie **401-465**.
+      - Przyjmuje parametry: `settings`, `parent`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.settings`, `self._current_display_name`, `info`, `self.path_label`, `self.status_label`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self.setWindowTitle()`, `QLabel()`, `info.setWordWrap()`, `self.path_label.setWordWrap()`, `self.status_label.setWordWrap()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._apply_styles()` — linie **467-473**.
+      - Wykonuje najważniejsze wywołania: `self.setStyleSheet()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._update_label()` — linie **475-477**.
+      - Buduje/aktualizuje kluczowe zmienne: `current_path`.
+      - Wykonuje najważniejsze wywołania: `self.settings.value()`, `self.path_label.setText()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._choose_path()` — linie **479-482**.
+      - Buduje/aktualizuje kluczowe zmienne: `new_path`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `new_path`.
+      - Wykonuje najważniejsze wywołania: `QFileDialog.getExistingDirectory()`, `self._set_path()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._set_path()` — linie **484-497**.
+      - Przyjmuje parametry: `path`, `display_name`.
+      - Buduje/aktualizuje kluczowe zmienne: `mapped`, `self._current_display_name`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `mapped`.
+      - Wykonuje najważniejsze wywołania: `_maybe_offer_drive_mapping(self, path, fast=True).strip()`, `self.settings.setValue()`, `self._update_label()`, `self._start_path_check()`, `display_name or ''.strip()`, `_maybe_offer_drive_mapping()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._on_retry()` — linie **499-500**.
+      - Wykonuje najważniejsze wywołania: `self._start_path_check()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._set_controls_enabled()` — linie **502-513**.
+      - Przyjmuje parametry: `enabled`.
+      - Iteruje po danych w pętlach typu: `for btn in (self.retry_btn, self.choose_btn, self.offline_btn, self.preset_evo,…`.
+      - Wykonuje najważniejsze wywołania: `btn.setEnabled()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._start_path_check()` — linie **515-536**.
+      - Buduje/aktualizuje kluczowe zmienne: `base_path`, `thread`, `worker`, `self._check_thread`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not base_path`; `self._check_thread is not None and self._check_thread.isRunning()`.
+      - Wykonuje najważniejsze wywołania: `self.settings.value()`, `self.status_label.setText()`, `self._set_controls_enabled()`, `QThread()`, `_PathCheckWorker()`, `worker.moveToThread()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda NetworkCheckDialog._on_path_check_finished()` — linie **538-553**.
+      - Przyjmuje parametry: `available`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._check_thread`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `available`.
+      - Wykonuje najważniejsze wywołania: `self._set_controls_enabled()`, `self.status_label.setText()`, `self.accept()`, `QMessageBox.warning()`, `self.settings.setValue()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NetworkCheckDialog._offline_cache_available()` — linie **555-583**.
+      - Buduje/aktualizuje kluczowe zmienne: `path`, `persistent`, `conn`, `cur`, `row`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not persistent`; `not path or not os.path.exists(path)`; `row`.
+      - Iteruje po danych w pętlach typu: `for table in ('param_snapshots', 'index_snapshots', 'grip_snapshots',…`.
+      - Wykonuje najważniejsze wywołania: `self.settings.value()`, `path or ''.strip()`, `bool()`, `sqlite3.connect()`, `conn.cursor()`, `conn.close()`.
+      - Zwraca m.in.: `False` / `True`.
+    - `Metoda NetworkCheckDialog._use_offline_cache()` — linie **585-597**.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self._offline_cache_available()`.
+      - Wykonuje najważniejsze wywołania: `self.accept()`, `self._offline_cache_available()`, `QMessageBox.warning()`, `self.settings.setValue()`.
+      - Zwraca m.in.: `None`.
+  - `Klasa CacheCheckDialog` — linie **601-714**.
+    - Odpowiedzialność klasy: Dialog displayed when the offline cache database is unavailable..
+    - `Metoda CacheCheckDialog.__init__()` — linie **604-651**.
+      - Przyjmuje parametry: `settings`, `parent`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.settings`, `info`, `self.path_label`, `self.status_label`, `self.retry_btn`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self.setWindowTitle()`, `QLabel()`, `info.setWordWrap()`, `self.path_label.setWordWrap()`, `self.status_label.setWordWrap()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda CacheCheckDialog._apply_styles()` — linie **653-659**.
+      - Wykonuje najważniejsze wywołania: `self.setStyleSheet()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda CacheCheckDialog._update_label()` — linie **661-665**.
+      - Buduje/aktualizuje kluczowe zmienne: `current_path`.
+      - Wykonuje najważniejsze wywołania: `self.settings.value()`, `self.path_label.setText()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda CacheCheckDialog._cache_available()` — linie **667-675**.
+      - Przyjmuje parametry: `path`.
+      - Buduje/aktualizuje kluczowe zmienne: `cache_path`, `persistent`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not persistent`.
+      - Wykonuje najważniejsze wywołania: `path or self.settings.value('cache_path', '',…()`, `sqlite_cache_available()`, `bool()`, `self.settings.value()`.
+      - Zwraca m.in.: `sqlite_cache_available(cache_path)` / `False`.
+    - `Metoda CacheCheckDialog._on_retry()` — linie **677-682**.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._cache_available()`.
+      - Wykonuje najważniejsze wywołania: `self.status_label.setText()`, `self._cache_available()`, `self.accept()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda CacheCheckDialog._choose_cache()` — linie **684-707**.
+      - Buduje/aktualizuje kluczowe zmienne: `(path, _)`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not path`; `not self._cache_available(path)`.
+      - Wykonuje najważniejsze wywołania: `QFileDialog.getOpenFileName()`, `self._update_label()`, `self.accept()`, `self._cache_available()`, `QMessageBox.warning()`, `self.settings.setValue()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda CacheCheckDialog._use_online()` — linie **709-714**.
+      - Wykonuje najważniejsze wywołania: `self.accept()`, `self.settings.setValue()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
 
 ## Plik: `hfm_analyzer/gui/handlers.py`
-- **Rola pliku:** Największa warstwa logiki GUI: reakcje na zdarzenia, filtrowanie, render tabel i eksporty.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `MainWindowHandlers`` — linie **92-6177**. Klasa odpowiedzialna za obszar: „MainWindowHandlers”.
-  - `  - Metoda `MainWindowHandlers.closeEvent()`` — linie **93-123**. Funkcja/metoda realizuje krok związany z: „closeEvent”.
-  - `  - Metoda `MainWindowHandlers._fetch_param_snapshots()`` — linie **125-153**. Funkcja/metoda realizuje krok związany z: „fetch param snapshots”.
-  - `  - Metoda `MainWindowHandlers._fetch_index_snapshots()`` — linie **155-183**. Funkcja/metoda realizuje krok związany z: „fetch index snapshots”.
-  - `  - Metoda `MainWindowHandlers._fetch_struct_snapshots()`` — linie **185-218**. Funkcja/metoda realizuje krok związany z: „fetch struct snapshots”.
-  - `  - Metoda `MainWindowHandlers._analysis_cache_filters()`` — linie **220-228**. Funkcja/metoda realizuje krok związany z: „analysis cache filters”.
-  - `  - Metoda `MainWindowHandlers._current_analysis_range()`` — linie **230-238**. Funkcja/metoda realizuje krok związany z: „current analysis range”.
-  - `  - Metoda `MainWindowHandlers._filter_intranet_rows_for_analysis()`` — linie **240-254**. Funkcja/metoda realizuje krok związany z: „filter intranet rows for analysis”.
-  - `  - Metoda `MainWindowHandlers._dedup_intranet_rows()`` — linie **256-266**. Funkcja/metoda realizuje krok związany z: „dedup intranet rows”.
-  - `  - Metoda `MainWindowHandlers._apply_styles()`` — linie **268-333**. Funkcja/metoda realizuje krok związany z: „apply styles”.
-  - `  - Metoda `MainWindowHandlers._format_log_message()`` — linie **335-340**. Funkcja/metoda realizuje krok związany z: „format log message”.
-  - `  - Metoda `MainWindowHandlers._append_log()`` — linie **342-347**. Funkcja/metoda realizuje krok związany z: „append log”.
-  - `  - Metoda `MainWindowHandlers._log()`` — linie **349-354**. Funkcja/metoda realizuje krok związany z: „log”.
-  - `  - Metoda `MainWindowHandlers._yield_ui()`` — linie **356-362**. Funkcja/metoda realizuje krok związany z: „yield ui”.
-  - `  - Metoda `MainWindowHandlers._is_offline_cache_mode()`` — linie **364-368**. Funkcja/metoda realizuje krok związany z: „is offline cache mode”.
-  - `  - Metoda `MainWindowHandlers._set_offline_cache_mode()`` — linie **370-374**. Funkcja/metoda realizuje krok związany z: „set offline cache mode”.
-  - `  - Metoda `MainWindowHandlers._on_tree_color_metric_changed()`` — linie **376-380**. Funkcja/metoda realizuje krok związany z: „on tree color metric changed”.
-  - `  - Metoda `MainWindowHandlers._cycle_time_sec_for_current_line()`` — linie **382-394**. Funkcja/metoda realizuje krok związany z: „cycle time sec for current line”.
-  - `  - Metoda `MainWindowHandlers._line_presets()`` — linie **396-410**. Funkcja/metoda realizuje krok związany z: „line presets”.
-  - `  - Metoda `MainWindowHandlers._refresh_line_selector()`` — linie **412-463**. Funkcja/metoda realizuje krok związany z: „refresh line selector”.
-  - `  - Metoda `MainWindowHandlers._on_line_selector_changed()`` — linie **465-499**. Funkcja/metoda realizuje krok związany z: „on line selector changed”.
-  - `  - Metoda `MainWindowHandlers._refresh_base_path_label()`` — linie **501-511**. Funkcja/metoda realizuje krok związany z: „refresh base path label”.
-  - `  - Metoda `MainWindowHandlers._get_base_path()`` — linie **513-514**. Funkcja/metoda realizuje krok związany z: „get base path”.
-  - `  - Metoda `MainWindowHandlers._default_persistent_cache_path()`` — linie **516-533**. Funkcja/metoda realizuje krok związany z: „default persistent cache path”.
-  - `  - Metoda `MainWindowHandlers._create_runtime_cache()`` — linie **535-565**. Funkcja/metoda realizuje krok związany z: „create runtime cache”.
-  - `  - Metoda `MainWindowHandlers._select_all()`` — linie **567-569**. Funkcja/metoda realizuje krok związany z: „select all”.
-  - `  - Metoda `MainWindowHandlers._deselect_all()`` — linie **571-573**. Funkcja/metoda realizuje krok związany z: „deselect all”.
-  - `  - Metoda `MainWindowHandlers._remember_default_date_bounds()`` — linie **575-582**. Funkcja/metoda realizuje krok związany z: „remember default date bounds”.
-  - `  - Metoda `MainWindowHandlers._reset_date_bounds()`` — linie **584-594**. Funkcja/metoda realizuje krok związany z: „reset date bounds”.
-  - `  - Metoda `MainWindowHandlers._apply_cache_date_bounds()`` — linie **596-631**. Funkcja/metoda realizuje krok związany z: „apply cache date bounds”.
-  - `  - Metoda `MainWindowHandlers._populate_machines_from_cache()`` — linie **633-669**. Funkcja/metoda realizuje krok związany z: „populate machines from cache”.
-  - `  - Metoda `MainWindowHandlers._populate_machines()`` — linie **671-704**. Funkcja/metoda realizuje krok związany z: „populate machines”.
-  - `  - Metoda `MainWindowHandlers._browse_base_path()`` — linie **706-714**. Funkcja/metoda realizuje krok związany z: „browse base path”.
-  - `  - Metoda `MainWindowHandlers._open_settings()`` — linie **716-745**. Funkcja/metoda realizuje krok związany z: „open settings”.
-  - `  - Metoda `MainWindowHandlers._start_scan()`` — linie **747-779**. Funkcja/metoda realizuje krok związany z: „start scan”.
-  - `  - Metoda `MainWindowHandlers._start_cache_only_analysis()`` — linie **781-844**. Funkcja/metoda realizuje krok związany z: „start cache only analysis”.
-  - `  - Metoda `MainWindowHandlers._on_progress()`` — linie **846-871**. Funkcja/metoda realizuje krok związany z: „on progress”.
-  - `  - Metoda `MainWindowHandlers._on_error()`` — linie **873-878**. Funkcja/metoda realizuje krok związany z: „on error”.
-  - `  - Metoda `MainWindowHandlers._on_finished()`` — linie **880-906**. Funkcja/metoda realizuje krok związany z: „on finished”.
-  - `  - Metoda `MainWindowHandlers._prepare_analysis_files()`` — linie **908-957**. Funkcja/metoda realizuje krok związany z: „prepare analysis files”.
-  - `  - Metoda `MainWindowHandlers._find_previous_backup_file()`` — linie **959-1043**. Funkcja/metoda realizuje krok związany z: „find previous backup file”.
-  - `  - Metoda `MainWindowHandlers._render_summary()`` — linie **1045-1499**. Funkcja/metoda realizuje krok związany z: „render summary”.
-  - `  - Metoda `MainWindowHandlers._quality_rollup_by_machine()`` — linie **1501-1684**. Funkcja/metoda realizuje krok związany z: „quality rollup by machine”.
-  - `  - Metoda `MainWindowHandlers._build_intranet_series()`` — linie **1686-1700**. Funkcja/metoda realizuje krok związany z: „build intranet series”.
-  - `  - Metoda `MainWindowHandlers._load_intranet_from_cache()`` — linie **1702-1749**. Funkcja/metoda realizuje krok związany z: „load intranet from cache”.
-  - `  - Metoda `MainWindowHandlers._start_intranet_fetch()`` — linie **1751-1872**. Funkcja/metoda realizuje krok związany z: „start intranet fetch”.
-  - `  - Metoda `MainWindowHandlers._on_intranet_ready()`` — linie **1874-2215**. Funkcja/metoda realizuje krok związany z: „on intranet ready”.
-  - `  - Metoda `MainWindowHandlers._format_intranet_datetime()`` — linie **2217-2225**. Funkcja/metoda realizuje krok związany z: „format intranet datetime”.
-  - `  - Metoda `MainWindowHandlers._rebuild_intranet_table()`` — linie **2227-2262**. Funkcja/metoda realizuje krok związany z: „rebuild intranet table”.
-  - `  - Metoda `MainWindowHandlers._populate_intranet_filters()`` — linie **2264-2283**. Funkcja/metoda realizuje krok związany z: „populate intranet filters”.
-  - `  - Metoda `MainWindowHandlers._apply_intranet_filters()`` — linie **2285-2352**. Funkcja/metoda realizuje krok związany z: „apply intranet filters”.
-  - `  - Metoda `MainWindowHandlers._on_intranet_error()`` — linie **2354-2397**. Funkcja/metoda realizuje krok związany z: „on intranet error”.
-  - `  - Metoda `MainWindowHandlers._make_color_icon()`` — linie **2399-2415**. Funkcja/metoda realizuje krok związany z: „make color icon”.
-  - `  - Metoda `MainWindowHandlers._make_action_icon()`` — linie **2417-2456**. Funkcja/metoda realizuje krok związany z: „make action icon”.
-  - `  - Metoda `MainWindowHandlers._is_worker_running()`` — linie **2458-2463**. Funkcja/metoda realizuje krok związany z: „is worker running”.
-  - `  - Metoda `MainWindowHandlers._set_task_active()`` — linie **2465-2498**. Funkcja/metoda realizuje krok związany z: „set task active”.
-  - `  - Metoda `MainWindowHandlers._reset_results_state()`` — linie **2500-2806**. Funkcja/metoda realizuje krok związany z: „reset results state”.
-  - `  - Metoda `MainWindowHandlers._update_thread_state()`` — linie **2808-2813**. Funkcja/metoda realizuje krok związany z: „update thread state”.
-  - `  - Metoda `MainWindowHandlers._stop_analysis()`` — linie **2815-2843**. Funkcja/metoda realizuje krok związany z: „stop analysis”.
-  - `  - Metoda `MainWindowHandlers._start_analysis()`` — linie **2845-2963**. Funkcja/metoda realizuje krok związany z: „start analysis”.
-  - `  - Metoda `MainWindowHandlers._on_analysis_error()`` — linie **2965-2998**. Funkcja/metoda realizuje krok związany z: „on analysis error”.
-  - `  - Metoda `MainWindowHandlers._on_analysis_finished()`` — linie **3000-3331**. Funkcja/metoda realizuje krok związany z: „on analysis finished”.
-  - `  - Metoda `MainWindowHandlers._populate_analysis_filters()`` — linie **3333-3362**. Funkcja/metoda realizuje krok związany z: „populate analysis filters”.
-  - `  - Metoda `MainWindowHandlers._update_analysis_pin_options()`` — linie **3364-3374**. Funkcja/metoda realizuje krok związany z: „update analysis pin options”.
-  - `  - Metoda `MainWindowHandlers._update_analysis_step_options()`` — linie **3376-3397**. Funkcja/metoda realizuje krok związany z: „update analysis step options”.
-  - `  - Metoda `MainWindowHandlers._update_analysis_param_options()`` — linie **3399-3422**. Funkcja/metoda realizuje krok związany z: „update analysis param options”.
-  - `  - Metoda `MainWindowHandlers._on_analysis_machine_changed()`` — linie **3424-3426**. Funkcja/metoda realizuje krok związany z: „on analysis machine changed”.
-  - `  - Metoda `MainWindowHandlers._on_analysis_pin_changed()`` — linie **3428-3430**. Funkcja/metoda realizuje krok związany z: „on analysis pin changed”.
-  - `  - Metoda `MainWindowHandlers._on_analysis_step_changed()`` — linie **3432-3434**. Funkcja/metoda realizuje krok związany z: „on analysis step changed”.
-  - `  - Metoda `MainWindowHandlers._apply_analysis_filters()`` — linie **3436-3495**. Funkcja/metoda realizuje krok związany z: „apply analysis filters”.
-  - `  - Metoda `MainWindowHandlers._set_combo_items()`` — linie **3497-3520**. Funkcja/metoda realizuje krok związany z: „set combo items”.
-  - `  - Metoda `MainWindowHandlers._populate_param_line_filters()`` — linie **3522-3550**. Funkcja/metoda realizuje krok związany z: „populate param line filters”.
-  - `  - Metoda `MainWindowHandlers._update_param_line_pin_options()`` — linie **3552-3564**. Funkcja/metoda realizuje krok związany z: „update param line pin options”.
-  - `  - Metoda `MainWindowHandlers._update_param_line_step_options()`` — linie **3566-3588**. Funkcja/metoda realizuje krok związany z: „update param line step options”.
-  - `  - Metoda `MainWindowHandlers._on_param_line_machine_changed()`` — linie **3590-3591**. Funkcja/metoda realizuje krok związany z: „on param line machine changed”.
-  - `  - Metoda `MainWindowHandlers._on_param_line_pin_changed()`` — linie **3593-3594**. Funkcja/metoda realizuje krok związany z: „on param line pin changed”.
-  - `  - Metoda `MainWindowHandlers._apply_param_line_filters()`` — linie **3596-3630**. Funkcja/metoda realizuje krok związany z: „apply param line filters”.
-  - `  - Metoda `MainWindowHandlers._clear_param_line_charts()`` — linie **3632-3637**. Funkcja/metoda realizuje krok związany z: „clear param line charts”.
-  - `  - Metoda `MainWindowHandlers._refresh_hp_grip_columns()`` — linie **3639-3667**. Funkcja/metoda realizuje krok związany z: „refresh hp grip columns”.
-  - `  - Metoda `MainWindowHandlers._refresh_nest_columns()`` — linie **3669-3699**. Funkcja/metoda realizuje krok związany z: „refresh nest columns”.
-  - `  - Metoda `MainWindowHandlers._refresh_stripping_columns()`` — linie **3701-3747**. Funkcja/metoda realizuje krok związany z: „refresh stripping columns”.
-  - `  - Metoda `MainWindowHandlers._configure_hp_grip_table()`` — linie **3749-3766**. Funkcja/metoda realizuje krok związany z: „configure hp grip table”.
-  - `  - Metoda `MainWindowHandlers._configure_nest_table()`` — linie **3768-3785**. Funkcja/metoda realizuje krok związany z: „configure nest table”.
-  - `  - Metoda `MainWindowHandlers._configure_stripping_table()`` — linie **3787-3804**. Funkcja/metoda realizuje krok związany z: „configure stripping table”.
-  - `  - Metoda `MainWindowHandlers._populate_hp_grip_filters()`` — linie **3806-3823**. Funkcja/metoda realizuje krok związany z: „populate hp grip filters”.
-  - `  - Metoda `MainWindowHandlers._update_hp_grip_pin_options()`` — linie **3825-3834**. Funkcja/metoda realizuje krok związany z: „update hp grip pin options”.
-  - `  - Metoda `MainWindowHandlers._on_hp_grip_machine_changed()`` — linie **3836-3838**. Funkcja/metoda realizuje krok związany z: „on hp grip machine changed”.
-  - `  - Metoda `MainWindowHandlers._apply_hp_grip_filters()`` — linie **3840-3883**. Funkcja/metoda realizuje krok związany z: „apply hp grip filters”.
-  - `  - Metoda `MainWindowHandlers._populate_nest_filters()`` — linie **3885-3902**. Funkcja/metoda realizuje krok związany z: „populate nest filters”.
-  - `  - Metoda `MainWindowHandlers._update_nest_pin_options()`` — linie **3904-3913**. Funkcja/metoda realizuje krok związany z: „update nest pin options”.
-  - `  - Metoda `MainWindowHandlers._on_nest_machine_changed()`` — linie **3915-3917**. Funkcja/metoda realizuje krok związany z: „on nest machine changed”.
-  - `  - Metoda `MainWindowHandlers._apply_nest_filters()`` — linie **3919-3962**. Funkcja/metoda realizuje krok związany z: „apply nest filters”.
-  - `  - Metoda `MainWindowHandlers._populate_stripping_filters()`` — linie **3964-3981**. Funkcja/metoda realizuje krok związany z: „populate stripping filters”.
-  - `  - Metoda `MainWindowHandlers._update_stripping_pin_options()`` — linie **3983-3992**. Funkcja/metoda realizuje krok związany z: „update stripping pin options”.
-  - `  - Metoda `MainWindowHandlers._on_stripping_machine_changed()`` — linie **3994-3996**. Funkcja/metoda realizuje krok związany z: „on stripping machine changed”.
-  - `  - Metoda `MainWindowHandlers._apply_stripping_filters()`` — linie **3998-4044**. Funkcja/metoda realizuje krok związany z: „apply stripping filters”.
-  - `  - Metoda `MainWindowHandlers._pareto_target_label()`` — linie **4046-4053**. Funkcja/metoda realizuje krok związany z: „pareto target label”.
-  - `  - Metoda `MainWindowHandlers._pareto_source_label()`` — linie **4055-4062**. Funkcja/metoda realizuje krok związany z: „pareto source label”.
-  - `  - Metoda `MainWindowHandlers._populate_pareto_filters()`` — linie **4064-4073**. Funkcja/metoda realizuje krok związany z: „populate pareto filters”.
-  - `  - Metoda `MainWindowHandlers._update_pareto_chart()`` — linie **4075-4113**. Funkcja/metoda realizuje krok związany z: „update pareto chart”.
-  - `  - Metoda `MainWindowHandlers._populate_param_card_filters()`` — linie **4115-4177**. Funkcja/metoda realizuje krok związany z: „populate param card filters”.
-  - `  - Metoda `MainWindowHandlers._on_param_card_datetime_changed()`` — linie **4179-4198**. Funkcja/metoda realizuje krok związany z: „on param card datetime changed”.
-  - `  - Metoda `MainWindowHandlers._update_param_card_datetime_options()`` — linie **4200-4229**. Funkcja/metoda realizuje krok związany z: „update param card datetime options”.
-  - `  - Metoda `MainWindowHandlers._on_param_card_machine_changed()`` — linie **4231-4249**. Funkcja/metoda realizuje krok związany z: „on param card machine changed”.
-  - `  - Metoda `MainWindowHandlers._set_param_card_group()`` — linie **4251-4394**. Funkcja/metoda realizuje krok związany z: „set param card group”.
-  - `  - Metoda `MainWindowHandlers._param_card_header_labels()`` — linie **4396-4424**. Funkcja/metoda realizuje krok związany z: „param card header labels”.
-  - `  - Metoda `MainWindowHandlers._update_param_card_table()`` — linie **4426-4504**. Funkcja/metoda realizuje krok związany z: „update param card table”.
-  - `  - Metoda `MainWindowHandlers._param_card_struct_text()`` — linie **4506-4508**. Funkcja/metoda realizuje krok związany z: „param card struct text”.
-  - `  - Metoda `MainWindowHandlers._param_card_find_struct_snapshot()`` — linie **4510-4530**. Funkcja/metoda realizuje krok związany z: „param card find struct snapshot”.
-  - `  - Metoda `MainWindowHandlers._param_card_cell_text()`` — linie **4532-4633**. Funkcja/metoda realizuje krok związany z: „param card cell text”.
-  - `  - Metoda `MainWindowHandlers._populate_index_line_filters()`` — linie **4635-4663**. Funkcja/metoda realizuje krok związany z: „populate index line filters”.
-  - `  - Metoda `MainWindowHandlers._update_index_line_table_options()`` — linie **4665-4677**. Funkcja/metoda realizuje krok związany z: „update index line table options”.
-  - `  - Metoda `MainWindowHandlers._update_index_line_step_options()`` — linie **4679-4701**. Funkcja/metoda realizuje krok związany z: „update index line step options”.
-  - `  - Metoda `MainWindowHandlers._on_index_line_machine_changed()`` — linie **4703-4704**. Funkcja/metoda realizuje krok związany z: „on index line machine changed”.
-  - `  - Metoda `MainWindowHandlers._on_index_line_pin_changed()`` — linie **4706-4707**. Funkcja/metoda realizuje krok związany z: „on index line pin changed”.
-  - `  - Metoda `MainWindowHandlers._apply_index_line_filters()`` — linie **4709-4746**. Funkcja/metoda realizuje krok związany z: „apply index line filters”.
-  - `  - Metoda `MainWindowHandlers._clear_index_line_charts()`` — linie **4748-4753**. Funkcja/metoda realizuje krok związany z: „clear index line charts”.
-  - `  - Metoda `MainWindowHandlers._populate_index_filters()`` — linie **4755-4776**. Funkcja/metoda realizuje krok związany z: „populate index filters”.
-  - `  - Metoda `MainWindowHandlers._update_index_table_options()`` — linie **4778-4788**. Funkcja/metoda realizuje krok związany z: „update index table options”.
-  - `  - Metoda `MainWindowHandlers._update_index_step_options()`` — linie **4790-4811**. Funkcja/metoda realizuje krok związany z: „update index step options”.
-  - `  - Metoda `MainWindowHandlers._update_index_param_options()`` — linie **4813-4843**. Funkcja/metoda realizuje krok związany z: „update index param options”.
-  - `  - Metoda `MainWindowHandlers._on_index_machine_changed()`` — linie **4845-4847**. Funkcja/metoda realizuje krok związany z: „on index machine changed”.
-  - `  - Metoda `MainWindowHandlers._on_index_table_changed()`` — linie **4849-4851**. Funkcja/metoda realizuje krok związany z: „on index table changed”.
-  - `  - Metoda `MainWindowHandlers._on_index_step_changed()`` — linie **4853-4855**. Funkcja/metoda realizuje krok związany z: „on index step changed”.
-  - `  - Metoda `MainWindowHandlers._apply_index_filters()`` — linie **4857-4912**. Funkcja/metoda realizuje krok związany z: „apply index filters”.
-  - `  - Metoda `MainWindowHandlers._format_index_value()`` — linie **4914-4926**. Funkcja/metoda realizuje krok związany z: „format index value”.
-  - `  - Metoda `MainWindowHandlers._format_override_value()`` — linie **4928-4934**. Funkcja/metoda realizuje krok związany z: „format override value”.
-  - `  - Metoda `MainWindowHandlers._normalize_struct_scalar()`` — linie **4937-4950**. Funkcja/metoda realizuje krok związany z: „normalize struct scalar”.
-  - `  - Metoda `MainWindowHandlers._format_struct_value()`` — linie **4953-4966**. Funkcja/metoda realizuje krok związany z: „format struct value”.
-  - `  - Metoda `MainWindowHandlers._build_struct_change_events()`` — linie **4968-5022**. Funkcja/metoda realizuje krok związany z: „build struct change events”.
-  - `  - Metoda `MainWindowHandlers._build_index_events()`` — linie **5024-5124**. Funkcja/metoda realizuje krok związany z: „build index events”.
-  - `  - Metoda `MainWindowHandlers._normalize_event_text()`` — linie **5127-5145**. Funkcja/metoda realizuje krok związany z: „normalize event text”.
-  - `  - Metoda `MainWindowHandlers._event_dt_key()`` — linie **5148-5151**. Funkcja/metoda realizuje krok związany z: „event dt key”.
-  - `  - Metoda `MainWindowHandlers._merge_event_paths()`` — linie **5153-5165**. Funkcja/metoda realizuje krok związany z: „merge event paths”.
-  - `  - Metoda `MainWindowHandlers._deduplicate_param_events()`` — linie **5167-5194**. Funkcja/metoda realizuje krok związany z: „deduplicate param events”.
-  - `  - Metoda `MainWindowHandlers._deduplicate_index_events()`` — linie **5196-5236**. Funkcja/metoda realizuje krok związany z: „deduplicate index events”.
-  - `  - Metoda `MainWindowHandlers._collapse_repeated_index_events()`` — linie **5238-5285**. Funkcja/metoda realizuje krok związany z: „collapse repeated index events”.
-  - `  - Metoda `MainWindowHandlers._fill_change_trees()`` — linie **5287-5500**. Funkcja/metoda realizuje krok związany z: „fill change trees”.
-  - `  - Metoda `MainWindowHandlers._on_top_issue_click()`` — linie **5502-5542**. Funkcja/metoda realizuje krok związany z: „on top issue click”.
-  - `  - Metoda `MainWindowHandlers._on_change_tree_click()`` — linie **5544-5574**. Funkcja/metoda realizuje krok związany z: „on change tree click”.
-  - `  - Metoda `MainWindowHandlers._set_combo()`` — linie **5576-5584**. Funkcja/metoda realizuje krok związany z: „set combo”.
-  - `  - Metoda `MainWindowHandlers._fill_program_changes_table()`` — linie **5586-5595**. Funkcja/metoda realizuje krok związany z: „fill program changes table”.
-  - `  - Metoda `MainWindowHandlers._populate_program_filters()`` — linie **5597-5605**. Funkcja/metoda realizuje krok związany z: „populate program filters”.
-  - `  - Metoda `MainWindowHandlers._populate_trend_filters()`` — linie **5607-5614**. Funkcja/metoda realizuje krok związany z: „populate trend filters”.
-  - `  - Metoda `MainWindowHandlers._apply_trend_filters()`` — linie **5616-5766**. Funkcja/metoda realizuje krok związany z: „apply trend filters”.
-  - `  - Metoda `MainWindowHandlers._apply_program_filters()`` — linie **5768-5791**. Funkcja/metoda realizuje krok związany z: „apply program filters”.
-  - `  - Metoda `MainWindowHandlers._export_top_issues_csv()`` — linie **5793-5822**. Funkcja/metoda realizuje krok związany z: „export top issues csv”.
-  - `  - Metoda `MainWindowHandlers._export_change_tree_csv()`` — linie **5824-5906**. Funkcja/metoda realizuje krok związany z: „export change tree csv”.
-  - `  - Metoda `MainWindowHandlers._export_tree_csv()`` — linie **5908-5973**. Funkcja/metoda realizuje krok związany z: „export tree csv”.
-  - `  - Metoda `MainWindowHandlers._export_analysis_csv()`` — linie **5975-6000**. Funkcja/metoda realizuje krok związany z: „export analysis csv”.
-  - `  - Metoda `MainWindowHandlers._export_index_csv()`` — linie **6002-6030**. Funkcja/metoda realizuje krok związany z: „export index csv”.
-  - `  - Metoda `MainWindowHandlers._export_programs_csv()`` — linie **6032-6052**. Funkcja/metoda realizuje krok związany z: „export programs csv”.
-  - `  - Metoda `MainWindowHandlers._export_param_card_csv()`` — linie **6054-6135**. Funkcja/metoda realizuje krok związany z: „export param card csv”.
-  - `  - Metoda `MainWindowHandlers._export_intranet_csv()`` — linie **6137-6177**. Funkcja/metoda realizuje krok związany z: „export intranet csv”.
+- **Rola modułu:** Event handler mixins for the GUI main window.
+- **Elementy i działanie:**
+  - `Klasa MainWindowHandlers` — linie **92-6177**.
+    - `Metoda MainWindowHandlers.closeEvent()` — linie **93-123**.
+      - Przyjmuje parametry: `e`.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `w`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `cache is not None`; `w is not None and hasattr(w, 'isRunning') and w.isRunning()`; `hasattr(w, 'requestInterruption')`.
+      - Iteruje po danych w pętlach typu: `for name in ('worker', 'a_worker', 'intra_worker')`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `super().closeEvent()`, `cache.close()`, `hasattr()`, `w.isRunning()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._fetch_param_snapshots()` — linie **125-153**.
+      - Przyjmuje parametry: `machine`, `machines`, `pin`, `step`, `dt`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `(start_dt, end_dt, default_machines)`, `default_machines`, `machines`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `isinstance(cache, RuntimeSQLiteCache)`; `start_dt is None and end_dt is None`; `machines is None and machine is None`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `isinstance()`, `list()`, `cache.fetch_param_snapshots()`, `self._analysis_cache_filters()`.
+      - Zwraca m.in.: `list(getattr(self, 'param_snapshots', []))` / `cache.fetch_param_snapshots(machine=machine, machines=machines, pin=pin,…`.
+    - `Metoda MainWindowHandlers._fetch_index_snapshots()` — linie **155-183**.
+      - Przyjmuje parametry: `machine`, `machines`, `table`, `step`, `dt`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `(start_dt, end_dt, default_machines)`, `default_machines`, `machines`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `isinstance(cache, RuntimeSQLiteCache)`; `start_dt is None and end_dt is None`; `machines is None and machine is None`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `isinstance()`, `list()`, `cache.fetch_index_snapshots_list()`, `self._analysis_cache_filters()`.
+      - Zwraca m.in.: `list(getattr(self, 'index_snapshots', []))` / `cache.fetch_index_snapshots_list(machine=machine, machines=machines,…`.
+    - `Metoda MainWindowHandlers._fetch_struct_snapshots()` — linie **185-218**.
+      - Przyjmuje parametry: `prefix`, `machine`, `machines`, `pin`, `dt`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `attr`, `(start_dt, end_dt, default_machines)`, `default_machines`, `machines`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `isinstance(cache, RuntimeSQLiteCache)`; `start_dt is None and end_dt is None`; `machines is None and machine is None`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `isinstance()`, `{'grip': 'hp_grip_snapshots', 'nest':…()`, `cache.fetch_struct_snapshots()`, `list()`, `self._analysis_cache_filters()`.
+      - Zwraca m.in.: `list(getattr(self, attr, [])) if attr else []` / `cache.fetch_struct_snapshots(prefix, machine=machine, machines=machines,…`.
+    - `Metoda MainWindowHandlers._analysis_cache_filters()` — linie **220-228**.
+      - Buduje/aktualizuje kluczowe zmienne: `start_dt`, `end_dt`, `machines`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machines`.
+      - Wykonuje najważniejsze wywołania: `getattr()`.
+      - Zwraca m.in.: `(start_dt, end_dt, machines)`.
+    - `Metoda MainWindowHandlers._current_analysis_range()` — linie **230-238**.
+      - Buduje/aktualizuje kluczowe zmienne: `start_dt`, `end_dt`, `(start_dt, end_dt)`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `start_dt is not None and end_dt is not None and (end_dt < start_dt)`.
+      - Wykonuje najważniejsze wywołania: `self.start_datetime.dateTime().toPyDateTime()`, `self.end_datetime.dateTime().toPyDateTime()`, `self.start_datetime.dateTime()`, `self.end_datetime.dateTime()`.
+      - Zwraca m.in.: `(start_dt, end_dt)` / `(None, None)`.
+    - `Metoda MainWindowHandlers._filter_intranet_rows_for_analysis()` — linie **240-254**.
+      - Przyjmuje parametry: `rows`.
+      - Buduje/aktualizuje kluczowe zmienne: `(start_dt, end_dt)`, `filtered`, `dt`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `start_dt is None and end_dt is None`; `not isinstance(dt, datetime)`; `start_dt is not None and dt < start_dt`.
+      - Iteruje po danych w pętlach typu: `for rr in rows`.
+      - Wykonuje najważniejsze wywołania: `self._current_analysis_range()`, `list()`, `rr.get()`, `filtered.append()`, `isinstance()`.
+      - Zwraca m.in.: `filtered` / `list(rows)`.
+    - `Metoda MainWindowHandlers._dedup_intranet_rows()` — linie **256-266**.
+      - Przyjmuje parametry: `rows`.
+      - Buduje/aktualizuje kluczowe zmienne: `sorted_rows`, `seen`, `deduped`, `sn`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `sn in seen`.
+      - Iteruje po danych w pętlach typu: `for rr in sorted_rows`.
+      - Wykonuje najważniejsze wywołania: `sorted()`, `set()`, `rr.get()`, `seen.add()`, `deduped.append()`, `r.get()`.
+      - Zwraca m.in.: `deduped`.
+    - `Metoda MainWindowHandlers._apply_styles()` — linie **268-333**.
+      - Wykonuje najważniejsze wywołania: `self.setStyleSheet()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._format_log_message()` — linie **335-340**.
+      - Przyjmuje parametry: `msg`.
+      - Buduje/aktualizuje kluczowe zmienne: `ts`.
+      - Wykonuje najważniejsze wywołania: `datetime.now().strftime()`, `datetime.now()`.
+      - Zwraca m.in.: `f'{ts} {msg}'` / `msg`.
+    - `Metoda MainWindowHandlers._append_log()` — linie **342-347**.
+      - Przyjmuje parametry: `msg`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `hasattr(self, 'logs_tab') and self.logs_tab is not None`.
+      - Wykonuje najważniejsze wywołania: `hasattr()`, `self.logs_tab.append()`, `self._format_log_message()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._log()` — linie **349-354**.
+      - Przyjmuje parametry: `msg`.
+      - Wykonuje najważniejsze wywołania: `self._append_log()`, `logging.getLogger('backup_analyzer').info()`, `logging.getLogger()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._yield_ui()` — linie **356-362**.
+      - Przyjmuje parametry: `counter`, `step`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `counter % step != 0`.
+      - Wykonuje najważniejsze wywołania: `QApplication.processEvents()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._is_offline_cache_mode()` — linie **364-368**.
+      - Wykonuje najważniejsze wywołania: `bool()`, `self.settings.value()`.
+      - Zwraca m.in.: `bool(self.settings.value('offline_cache_mode', False, type=bool))` / `False`.
+    - `Metoda MainWindowHandlers._set_offline_cache_mode()` — linie **370-374**.
+      - Przyjmuje parametry: `enabled`.
+      - Wykonuje najważniejsze wywołania: `self.settings.setValue()`, `bool()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_tree_color_metric_changed()` — linie **376-380**.
+      - Przyjmuje parametry: `_index`.
+      - Wykonuje najważniejsze wywołania: `self._render_summary()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._cycle_time_sec_for_current_line()` — linie **382-394**.
+      - Buduje/aktualizuje kluczowe zmienne: `key`, `line_id`, `value`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `value <= 0`.
+      - Wykonuje najważniejsze wywołania: `int()`, `float()`, `self.settings.value()`, `default_cycle_time_sec()`.
+      - Zwraca m.in.: `value`.
+    - `Metoda MainWindowHandlers._line_presets()` — linie **396-410**.
+      - Zwraca m.in.: `[{'label': 'BSG EVO', 'path': DEFAULT_PATH_EVO, 'line_id': 424, 'display_name':…`.
+    - `Metoda MainWindowHandlers._refresh_line_selector()` — linie **412-463**.
+      - Buduje/aktualizuje kluczowe zmienne: `combo`, `current_path`, `current_display`, `presets`, `selected_index`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `combo is None`; `selected_index < 0`; `current_display and current_display.strip().lower() == preset['display_name'].lower()`.
+      - Iteruje po danych w pętlach typu: `for preset in presets`; `for (idx, preset) in enumerate(presets)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._line_presets()`, `combo.blockSignals()`, `combo.clear()`, `_norm_path()`, `enumerate()`.
+      - Zwraca m.in.: `None` / `os.path.normcase(os.path.normpath(path))` / `(path or '').strip().lower()`.
+    - `Metoda MainWindowHandlers._on_line_selector_changed()` — linie **465-499**.
+      - Przyjmuje parametry: `index`.
+      - Buduje/aktualizuje kluczowe zmienne: `combo`, `data`, `new_path`, `new_display`, `new_line_id`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `combo is None`; `index < 0 or index >= combo.count()`; `not isinstance(data, dict)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `combo.itemData()`, `data.get('path') or ''.strip()`, `data.get('display_name') or ''.strip()`, `data.get()`, `self.settings.value()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._refresh_base_path_label()` — linie **501-511**.
+      - Buduje/aktualizuje kluczowe zmienne: `status_label`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `status_label is not None`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._refresh_line_selector()`, `status_label.setText()`, `self._is_offline_cache_mode()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._get_base_path()` — linie **513-514**.
+      - Wykonuje najważniejsze wywołania: `self.settings.value()`.
+      - Zwraca m.in.: `self.settings.value('base_path', '', type=str)`.
+    - `Metoda MainWindowHandlers._default_persistent_cache_path()` — linie **516-533**.
+      - Buduje/aktualizuje kluczowe zmienne: `base`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not base`; `base`.
+      - Wykonuje najważniejsze wywołania: `os.path.join()`, `QStandardPaths.writableLocation()`, `tempfile.gettempdir()`, `os.makedirs()`, `os.path.expanduser()`.
+      - Zwraca m.in.: `os.path.join(tempfile.gettempdir(), 'hfm_analyzer_cache.sqlite')` / `os.path.join(base, 'hfm_analyzer_cache.sqlite')`.
+    - `Metoda MainWindowHandlers._create_runtime_cache()` — linie **535-565**.
+      - Buduje/aktualizuje kluczowe zmienne: `path`, `persistent`, `cache`, `self.runtime_cache_path`, `dir_path`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `persistent`; `not path`; `dir_path`.
+      - Wykonuje najważniejsze wywołania: `bool()`, `path or ''.strip()`, `RuntimeSQLiteCache()`, `self.settings.value()`, `self._default_persistent_cache_path()`, `os.path.dirname()`.
+      - Zwraca m.in.: `cache` / `None`.
+    - `Metoda MainWindowHandlers._select_all()` — linie **567-569**.
+      - Iteruje po danych w pętlach typu: `for i in range(self.machine_list.count())`.
+      - Wykonuje najważniejsze wywołania: `range()`, `self.machine_list.count()`, `self.machine_list.item(i).setSelected()`, `self.machine_list.item()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._deselect_all()` — linie **571-573**.
+      - Iteruje po danych w pętlach typu: `for i in range(self.machine_list.count())`.
+      - Wykonuje najważniejsze wywołania: `range()`, `self.machine_list.count()`, `self.machine_list.item(i).setSelected()`, `self.machine_list.item()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._remember_default_date_bounds()` — linie **575-582**.
+      - Buduje/aktualizuje kluczowe zmienne: `self._default_start_min`, `self._default_start_max`, `self._default_end_min`, `self._default_end_max`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'start_datetime') or not hasattr(self, 'end_datetime')`; `not hasattr(self, '_default_start_min')`.
+      - Wykonuje najważniejsze wywołania: `hasattr()`, `self.start_datetime.minimumDateTime()`, `self.start_datetime.maximumDateTime()`, `self.end_datetime.minimumDateTime()`, `self.end_datetime.maximumDateTime()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._reset_date_bounds()` — linie **584-594**.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'start_datetime') or not hasattr(self, 'end_datetime')`.
+      - Wykonuje najważniejsze wywołania: `self._remember_default_date_bounds()`, `self.start_datetime.setMinimumDateTime()`, `self.start_datetime.setMaximumDateTime()`, `self.end_datetime.setMinimumDateTime()`, `self.end_datetime.setMaximumDateTime()`, `hasattr()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._apply_cache_date_bounds()` — linie **596-631**.
+      - Przyjmuje parametry: `min_dt`, `max_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `qmin`, `qmax`, `start`, `end`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'start_datetime') or not hasattr(self, 'end_datetime')`; `qmax < qmin`; `start < qmin`.
+      - Wykonuje najważniejsze wywołania: `self._remember_default_date_bounds()`, `QDateTime()`, `self.start_datetime.setMinimumDateTime()`, `self.start_datetime.setMaximumDateTime()`, `self.end_datetime.setMinimumDateTime()`, `self.end_datetime.setMaximumDateTime()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._populate_machines_from_cache()` — linie **633-669**.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `self.runtime_cache`, `(min_dt, max_dt)`, `machines`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `cache is None or not isinstance(cache, RuntimeSQLiteCache)`; `cache is None or not isinstance(cache, RuntimeSQLiteCache) or (not cache.persistent)`; `min_dt is None or max_dt is None`.
+      - Iteruje po danych w pętlach typu: `for name in machines`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self.scan_btn.setEnabled()`, `self._create_runtime_cache()`, `self.machine_list.addItem()`, `cache.fetch_time_bounds()`, `cache.fetch_machine_names()`.
+      - Zwraca m.in.: `True` / `False`.
+    - `Metoda MainWindowHandlers._populate_machines()` — linie **671-704**.
+      - Buduje/aktualizuje kluczowe zmienne: `base_path`, `entries`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._is_offline_cache_mode()`; `base_path and network_path_available(base_path)`; `not base_path or not network_path_available(base_path)`.
+      - Iteruje po danych w pętlach typu: `for name in entries`.
+      - Wykonuje najważniejsze wywołania: `self._get_base_path()`, `self.machine_list.clear()`, `self._all_machines.clear()`, `self._is_offline_cache_mode()`, `self._populate_machines_from_cache()`, `network_path_available()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._browse_base_path()` — linie **706-714**.
+      - Buduje/aktualizuje kluczowe zmienne: `old_path`, `new_path`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `new_path`; `new_path != old_path`.
+      - Wykonuje najważniejsze wywołania: `self.settings.value()`, `QFileDialog.getExistingDirectory()`, `self.settings.setValue()`, `self._refresh_base_path_label()`, `self._populate_machines()`, `self._reset_results_state()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._open_settings()` — linie **716-745**.
+      - Buduje/aktualizuje kluczowe zmienne: `old_path`, `old_line_id`, `old_cache_persistent`, `old_cache_path`, `runtime_db_path`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `dlg.exec_() == QDialog.Accepted`; `new_path != old_path or new_line_id != old_line_id`; `new_cache_persistent != old_cache_persistent or (new_cache_path or '').strip() !=…`.
+      - Wykonuje najważniejsze wywołania: `self.settings.value()`, `getattr()`, `SettingsDialog()`, `dlg.exec_()`, `self._refresh_base_path_label()`, `self._populate_machines()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._start_scan()` — linie **747-779**.
+      - Buduje/aktualizuje kluczowe zmienne: `base_path`, `selected`, `start_dt`, `end_dt`, `self.worker`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._is_offline_cache_mode()`; `not network_path_available(base_path)`; `not selected`.
+      - Wykonuje najważniejsze wywołania: `self._get_base_path()`, `self._is_offline_cache_mode()`, `self.start_datetime.dateTime().toPyDateTime()`, `self.end_datetime.dateTime().toPyDateTime()`, `self._reset_results_state()`, `self.progress.setRange()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._start_cache_only_analysis()` — linie **781-844**.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `selected`, `start_dt`, `end_dt`, `self._analysis_cache_start`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `cache is None or not isinstance(cache, RuntimeSQLiteCache)`; `cache is None or not isinstance(cache, RuntimeSQLiteCache) or (not cache.persistent)`; `not selected`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self.start_datetime.dateTime().toPyDateTime()`, `self.end_datetime.dateTime().toPyDateTime()`, `sorted()`, `self._reset_results_state()`, `self.progress.setRange()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_progress()` — linie **846-871**.
+      - Przyjmuje parametry: `msg`.
+      - Buduje/aktualizuje kluczowe zmienne: `m`, `done`, `total`, `start`, `elapsed`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `msg.startswith('Analiza ') or msg.startswith('Analizuj')`; `m`; `start and done > 0 and (total > 0)`.
+      - Wykonuje najważniejsze wywołania: `self.progress.setFormat()`, `self._append_log()`, `msg.startswith()`, `re.search()`, `int()`, `getattr()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_error()` — linie **873-878**.
+      - Przyjmuje parametry: `err`.
+      - Wykonuje najważniejsze wywołania: `self.progress.setVisible()`, `self.status_label.setText()`, `self.scan_btn.setEnabled()`, `QMessageBox.critical()`, `self._append_log()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_finished()` — linie **880-906**.
+      - Przyjmuje parametry: `found`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.found_files`, `machines`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self.found_files`.
+      - Wykonuje najważniejsze wywołania: `self.progress.setVisible()`, `self.status_label.setText()`, `self.scan_btn.setEnabled()`, `list()`, `self._render_summary()`, `self._log()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._prepare_analysis_files()` — linie **908-957**.
+      - Buduje/aktualizuje kluczowe zmienne: `files`, `base_path`, `earliest`, `extras`, `baseline_details`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not files`; `not base_path or not network_path_available(base_path)`; `not extras`.
+      - Iteruje po danych w pętlach typu: `for entry in files`; `for (machine, ref) in earliest.items()`.
+      - Wykonuje najważniejsze wywołania: `list()`, `self._get_base_path()`, `getattr()`, `earliest.items()`, `combined.sort()`, `network_path_available()`.
+      - Zwraca m.in.: `files` / `combined`.
+    - `Metoda MainWindowHandlers._find_previous_backup_file()` — linie **959-1043**.
+      - Przyjmuje parametry: `base_path`, `machine`, `reference_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_dir`, `years`, `year_path`, `year_val`, `months`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not os.path.isdir(machine_dir)`; `not os.path.isdir(year_path)`; `year_val > reference_dt.year`.
+      - Iteruje po danych w pętlach typu: `for year in years`; `for month in months`; `for day_name in days`.
+      - Wykonuje najważniejsze wywołania: `os.path.join()`, `os.path.isdir()`, `sorted()`, `int()`, `os.listdir()`, `entry.isdigit()`.
+      - Zwraca m.in.: `None` / `FoundFile(machine=machine, dt=file_dt, path=path)`.
+    - `Metoda MainWindowHandlers._render_summary()` — linie **1045-1499**.
+      - Buduje/aktualizuje kluczowe zmienne: `total_changes`, `per_machine_counts`, `per_machine_day_counts`, `machines`, `palette`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self.found_files`; `quality_rollup`; `hasattr(self, 'tree') and self.tree is not None`.
+      - Iteruje po danych w pętlach typu: `for f in self.found_files`; `while cur <= end_norm`; `for machine in sorted(per_machine.keys())`.
+      - Wykonuje najważniejsze wywołania: `len()`, `defaultdict()`, `set()`, `sorted()`, `self._quality_rollup_by_machine()`, `machines.add()`.
+      - Zwraca m.in.: `None` / `base.strftime('%Y-%m-%d %H:00')` / `QColor(rr, gg, bb)`.
+    - `Metoda MainWindowHandlers._quality_rollup_by_machine()` — linie **1501-1684**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `known_machines`, `display_lookup`, `feeder_map`, `entries`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not rows`; `start_dt and end_dt and (end_dt < start_dt)`; `not entries`.
+      - Iteruje po danych w pętlach typu: `for machine in known_machines`; `for rec in rows`; `for rec in entries`.
+      - Wykonuje najważniejsze wywołania: `set()`, `getattr()`, `self.start_datetime.dateTime().toPyDateTime()`, `self.end_datetime.dateTime().toPyDateTime()`, `known_machines.update()`, `str(value or '').strip()`.
+      - Zwraca m.in.: `rollup` / `{}` / `code if code in TRACKED_MACHINE_CODES else ''`.
+    - `Metoda MainWindowHandlers._build_intranet_series()` — linie **1686-1700**.
+      - Przyjmuje parametry: `rows`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `fine_grain`, `series`, `dt`, `judge`, `bucket`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not isinstance(dt, datetime)`; `dt < start_dt or dt > end_dt`; `judge != 'NOK'`.
+      - Iteruje po danych w pętlach typu: `for rec in rows`.
+      - Wykonuje najważniejsze wywołania: `end_dt - start_dt.total_seconds()`, `rec.get()`, `str(rec.get('judge', '') or '').strip().upper()`, `isinstance()`, `dt.strftime()`, `dt.date().isoformat()`.
+      - Zwraca m.in.: `series`.
+    - `Metoda MainWindowHandlers._load_intranet_from_cache()` — linie **1702-1749**.
+      - Przyjmuje parametry: `start_dt`, `end_dt`, `line_id`, `show_progress`.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `rows_nok`, `series`, `data`, `self.runtime_cache`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `cache is None or not isinstance(cache, RuntimeSQLiteCache)`; `cache is None or not isinstance(cache, RuntimeSQLiteCache) or (not cache.persistent)`; `not rows_all and line_id`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._build_intranet_series()`, `self._on_intranet_ready()`, `self._create_runtime_cache()`, `cache.fetch_intranet_rows()`, `isinstance()`.
+      - Zwraca m.in.: `True` / `False`.
+    - `Metoda MainWindowHandlers._start_intranet_fetch()` — linie **1751-1872**.
+      - Przyjmuje parametry: `show_progress`.
+      - Buduje/aktualizuje kluczowe zmienne: `prev_worker`, `self.intra_worker`, `self.intranet_rows`, `self.intranet_filtered_rows`, `self.intranet_all_rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `prev_worker is not None and hasattr(prev_worker, 'isRunning') and…`; `hasattr(self, 'intra_table') and self.intra_table is not None`; `hasattr(self, 'bar_native') and self.bar_native is not None`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_task_active()`, `self.start_datetime.dateTime().toPyDateTime()`, `self.end_datetime.dateTime().toPyDateTime()`, `self.settings.value()`, `self._log()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_intranet_ready()` — linie **1874-2215**.
+      - Przyjmuje parametry: `data`.
+      - Buduje/aktualizuje kluczowe zmienne: `analysis_running`, `worker_running`, `series`, `rows`, `keys`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not analysis_running and (not worker_running)`; `analysis_running`; `toks`.
+      - Iteruje po danych w pętlach typu: `for r in all_rows`; `for (sn, sn_rows) in by_sn.items()`; `for name in sorted(known_machines)`.
+      - Wykonuje najważniejsze wywołania: `self._is_worker_running()`, `self._set_task_active()`, `sorted()`, `self.bar_native.set_overlay()`, `self._log()`, `by_sn.items()`.
+      - Zwraca m.in.: `out` / `('', '')` / `tokens`.
+    - `Metoda MainWindowHandlers._format_intranet_datetime()` — linie **2217-2225**.
+      - Przyjmuje parametry: `value`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not value`; `isinstance(value, datetime)`.
+      - Wykonuje najważniejsze wywołania: `str()`, `isinstance()`, `value.strftime()`.
+      - Zwraca m.in.: `str(value)` / `''` / `value.strftime('%Y-%m-%d %H:%M:%S')`.
+    - `Metoda MainWindowHandlers._rebuild_intranet_table()` — linie **2227-2262**.
+      - Przyjmuje parametry: `rows`.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `sap`, `machine`, `source_desc`, `source_map`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`; `not dt_txt`; `dt_txt`.
+      - Iteruje po danych w pętlach typu: `for (idx, record) in enumerate(rows)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `table.setUpdatesEnabled()`, `table.setRowCount()`, `enumerate()`, `len()`, `record.get()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._populate_intranet_filters()` — linie **2264-2283**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `machines_sap`, `machines_desc`, `sources_desc`, `sources_map`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not isinstance(rows, list)`; `hasattr(self, 'intra_f_machine_code')`; `hasattr(self, 'intra_f_machine_desc')`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `hasattr()`, `isinstance()`, `r.get()`, `self._set_combo_items()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_intranet_filters()` — linie **2285-2352**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `table`, `machine_code_combo`, `machine_desc_combo`, `source_desc_combo`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not isinstance(rows, list)`; `table is None`; `table.rowCount() != len(rows)`.
+      - Iteruje po danych w pętlach typu: `for (idx, record) in enumerate(rows)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `table.setUpdatesEnabled()`, `enumerate()`, `isinstance()`, `list()`, `table.rowCount()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_intranet_error()` — linie **2354-2397**.
+      - Przyjmuje parametry: `err`.
+      - Buduje/aktualizuje kluczowe zmienne: `analysis_running`, `worker_running`, `start_dt`, `end_dt`, `line_id`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `fetch_start and end_dt`; `not analysis_running and (not worker_running)`; `days_back < 0`.
+      - Wykonuje najważniejsze wywołania: `self._log()`, `self._is_worker_running()`, `self._set_task_active()`, `self.start_datetime.dateTime().toPyDateTime()`, `self.end_datetime.dateTime().toPyDateTime()`, `self.settings.value()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._make_color_icon()` — linie **2399-2415**.
+      - Przyjmuje parametry: `color`, `size`.
+      - Buduje/aktualizuje kluczowe zmienne: `pm`, `p`, `r`, `inset`.
+      - Wykonuje najważniejsze wywołania: `QPixmap()`, `pm.fill()`, `QPainter()`, `p.setRenderHint()`, `p.setPen()`, `p.setBrush()`.
+      - Zwraca m.in.: `QIcon(pm)`.
+    - `Metoda MainWindowHandlers._make_action_icon()` — linie **2417-2456**.
+      - Przyjmuje parametry: `kind`, `size`.
+      - Buduje/aktualizuje kluczowe zmienne: `pm`, `p`, `pen_w`, `pen`, `color`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `kind == 'select'`; `kind == 'deselect'`; `kind == 'refresh'`.
+      - Wykonuje najważniejsze wywołania: `QPixmap()`, `pm.fill()`, `QPainter()`, `p.setRenderHint()`, `max()`, `QPen()`.
+      - Zwraca m.in.: `QIcon(pm)`.
+    - `Metoda MainWindowHandlers._is_worker_running()` — linie **2458-2463**.
+      - Przyjmuje parametry: `attr`.
+      - Buduje/aktualizuje kluczowe zmienne: `worker`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `bool()`, `hasattr()`, `worker.isRunning()`.
+      - Zwraca m.in.: `bool(worker is not None and hasattr(worker, 'isRunning') and worker.isRunning())` / `False`.
+    - `Metoda MainWindowHandlers._set_task_active()` — linie **2465-2498**.
+      - Przyjmuje parametry: `task`, `active`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._active_tasks`, `progress`, `tasks`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `active`; `progress is None`; `tasks`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `tasks.discard()`, `set()`, `tasks.add()`, `progress.setRange()`, `progress.setVisible()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._reset_results_state()` — linie **2500-2806**.
+      - Przyjmuje parametry: `clear_found_files`.
+      - Buduje/aktualizuje kluczowe zmienne: `progress`, `status`, `analysis_table`, `index_table`, `program_table`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `progress is not None`; `status is not None`; `clear_found_files`.
+      - Iteruje po danych w pętlach typu: `for line_edit_name in ('intra_f_date', 'intra_f_serial')`; `for combo_name in ('intra_f_machine_code', 'intra_f_machine_desc',…`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `set()`, `self._configure_hp_grip_table()`, `self._configure_nest_table()`, `self._configure_stripping_table()`, `self._populate_hp_grip_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._update_thread_state()` — linie **2808-2813**.
+      - Przyjmuje parametry: `text`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `hasattr(self, 'thread_state') and self.thread_state is not None`.
+      - Wykonuje najważniejsze wywołania: `hasattr()`, `self.thread_state.setText()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._stop_analysis()` — linie **2815-2843**.
+      - Buduje/aktualizuje kluczowe zmienne: `w`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `w is not None`; `hasattr(w, 'requestInterruption')`.
+      - Iteruje po danych w pętlach typu: `for name in ('a_worker', 'worker', 'intra_worker')`.
+      - Wykonuje najważniejsze wywołania: `self._set_task_active()`, `self.status_label.setText()`, `self._update_thread_state()`, `getattr()`, `self.analysis_run_btn.setEnabled()`, `hasattr()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._start_analysis()` — linie **2845-2963**.
+      - Buduje/aktualizuje kluczowe zmienne: `analysis_files`, `self.analysis_records`, `self.index_events`, `self.index_filtered_rows`, `self.a_worker`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not getattr(self, 'found_files', None)`; `not analysis_files`; `getattr(self, 'a_worker', None) is not None and self.a_worker.isRunning()`.
+      - Wykonuje najważniejsze wywołania: `self._prepare_analysis_files()`, `self._reset_results_state()`, `self.progress.setRange()`, `self.progress.setVisible()`, `self.status_label.setText()`, `self.analysis_run_btn.setEnabled()`.
+      - Zwraca m.in.: `None`.
+      - W sytuacjach wyjątkowych może zgłosić: `RuntimeError('Brak dostępu do pliku bazy danych.')`.
+    - `Metoda MainWindowHandlers._on_analysis_error()` — linie **2965-2998**.
+      - Przyjmuje parametry: `err`.
+      - Buduje/aktualizuje kluczowe zmienne: `intra_running`, `end`, `start`, `dur`, `dur_txt`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `intra_running`.
+      - Wykonuje najważniejsze wywołania: `self._set_task_active()`, `self._is_worker_running()`, `QMessageBox.critical()`, `self.status_label.setText()`, `self.analysis_run_btn.setEnabled()`, `datetime.now()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_analysis_finished()` — linie **3000-3331**.
+      - Przyjmuje parametry: `records`.
+      - Buduje/aktualizuje kluczowe zmienne: `intra_running`, `cache`, `counts`, `skipped`, `cache_busy`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `intra_running`; `isinstance(records, dict)`; `isinstance(cache, RuntimeSQLiteCache)`.
+      - Iteruje po danych w pętlach typu: `for s in param_iter`; `for name in PARAM_DISPLAY_ORDER`.
+      - Wykonuje najważniejsze wywołania: `self._set_task_active()`, `self._is_worker_running()`, `getattr()`, `isinstance()`, `self._log()`, `self._analysis_cache_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._populate_analysis_filters()` — linie **3333-3362**.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `hierarchy`, `self._analysis_filter_hierarchy`, `machines`, `machine`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `event.get('type') != 'change'`; `params`; `machine and machine not in hierarchy`.
+      - Iteruje po danych w pętlach typu: `for event in events`; `for machine in machines_all`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_combo_items()`, `self._update_analysis_pin_options()`, `str(event.get('machine', '') or '').strip()`, `str(event.get('pin', '') or '').strip()`, `event.get()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._update_analysis_pin_options()` — linie **3364-3374**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for machine_pins in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `self._update_analysis_step_options()`, `getattr()`, `self.f_machine.count()`, `self.f_machine.currentText().strip()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._update_analysis_step_options()` — linie **3376-3397**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pin`, `steps`, `machine_pins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`; `pin and pin != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for pin_steps in machine_pins.values()`; `for machine_pins in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `self._update_analysis_param_options()`, `getattr()`, `self.f_machine.count()`, `self.f_machine.currentText().strip()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._update_analysis_param_options()` — linie **3399-3422**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pin`, `step`, `params`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`; `pin and pin != '(Wszystkie)' and (pin_key != pin)`; `step and step != '(Wszystkie)' and (step_key != step)`.
+      - Iteruje po danych w pętlach typu: `for (pin_key, pin_steps) in machine_pins.items()`; `for (machine_key, machine_pins) in hierarchy.items()`; `for (step_key, param_set) in pin_steps.items()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `getattr()`, `self.f_machine.count()`, `self.f_machine.currentText().strip()`, `self.f_pin.count()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_analysis_machine_changed()` — linie **3424-3426**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_analysis_pin_options()`, `self._apply_analysis_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_analysis_pin_changed()` — linie **3428-3430**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_analysis_step_options()`, `self._apply_analysis_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_analysis_step_changed()` — linie **3432-3434**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_analysis_param_options()`, `self._apply_analysis_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_analysis_filters()` — linie **3436-3495**.
+      - Buduje/aktualizuje kluczowe zmienne: `m`, `pin`, `st`, `par`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'analysis_events')`; `getattr(self, '_analysis_auto_resize', False)`; `e.get('type') != 'change'`.
+      - Iteruje po danych w pętlach typu: `for e in getattr(self, 'analysis_events', [])`; `for (i, e) in enumerate(rows)`; `for (j, name) in enumerate(params)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self.analysis_table.setRowCount()`, `QBrush()`, `enumerate()`, `hasattr()`, `self.f_machine.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._set_combo_items()` — linie **3497-3520**.
+      - Przyjmuje parametry: `combo`, `items`, `sort_items`.
+      - Buduje/aktualizuje kluczowe zmienne: `texts`, `seen`, `current`, `text`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `sort_items`; `current and combo.findText(current) >= 0`; `not text`.
+      - Iteruje po danych w pętlach typu: `for item in items`; `for text in texts`.
+      - Wykonuje najważniejsze wywołania: `set()`, `combo.blockSignals()`, `combo.clear()`, `combo.addItem()`, `str()`, `texts.append()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._populate_param_line_filters()` — linie **3522-3550**.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `self._param_line_hierarchy`, `(start_dt, end_dt, machines_filter)`, `hierarchy`, `snaps`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'param_line_machine')`; `isinstance(cache, RuntimeSQLiteCache)`; `not machine`.
+      - Iteruje po danych w pętlach typu: `for snap in snaps`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `isinstance()`, `self._set_combo_items()`, `self._update_param_line_pin_options()`, `hasattr()`, `self._analysis_cache_filters()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_param_line_pin_options()` — linie **3552-3564**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'param_line_machine')`; `machine and machine != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for machine_pins in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `self._update_param_line_step_options()`, `hasattr()`, `getattr()`, `self.param_line_machine.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_param_line_step_options()` — linie **3566-3588**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pin`, `steps`, `machine_pins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'param_line_step')`; `machine and machine != '(Wszystkie)'`; `pin and pin != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for values in machine_pins.values()`; `for machine_pins in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `hasattr()`, `getattr()`, `self.param_line_machine.count()`, `self.param_line_machine.currentText().strip()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_param_line_machine_changed()` — linie **3590-3591**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_param_line_pin_options()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_param_line_pin_changed()` — linie **3593-3594**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_param_line_step_options()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_param_line_filters()` — linie **3596-3630**.
+      - Buduje/aktualizuje kluczowe zmienne: `charts`, `machine`, `pin`, `step`, `step_value`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not charts`; `step and step != '(Wszystkie)'`; `name != STEP_SPEED_LABEL and (not snap.included.get(name, False))`.
+      - Iteruje po danych w pętlach typu: `for (name, chart) in charts.items()`; `for snap in snaps`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._fetch_param_snapshots()`, `charts.items()`, `self.param_line_machine.count()`, `self.param_line_machine.currentText().strip()`, `self.param_line_pin.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._clear_param_line_charts()` — linie **3632-3637**.
+      - Buduje/aktualizuje kluczowe zmienne: `charts`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not charts`.
+      - Iteruje po danych w pętlach typu: `for (name, chart) in charts.items()`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `charts.items()`, `chart.set_series()`, `self._param_line_colors.get()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._refresh_hp_grip_columns()` — linie **3639-3667**.
+      - Buduje/aktualizuje kluczowe zmienne: `keys`, `events`, `ordered`, `remaining`, `self._hp_grip_value_keys`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `events`; `isinstance(cache, RuntimeSQLiteCache)`; `key in keys`.
+      - Iteruje po danych w pętlach typu: `for key in GRIP_PARAM_ORDER`; `for event in events`; `for key in event.get('values', {}).keys()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `getattr()`, `sorted()`, `ordered.extend()`, `self._configure_hp_grip_table()`, `isinstance()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._refresh_nest_columns()` — linie **3669-3699**.
+      - Buduje/aktualizuje kluczowe zmienne: `keys`, `events`, `cache`, `ordered`, `remaining`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `events`; `isinstance(cache, RuntimeSQLiteCache)`; `key in keys`.
+      - Iteruje po danych w pętlach typu: `for key in NEST_PARAM_ORDER`; `for event in events`; `for snap in getattr(self, 'nest_snapshots', [])`.
+      - Wykonuje najważniejsze wywołania: `set()`, `getattr()`, `isinstance()`, `sorted()`, `ordered.extend()`, `self._configure_nest_table()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._refresh_stripping_columns()` — linie **3701-3747**.
+      - Buduje/aktualizuje kluczowe zmienne: `keys`, `events`, `cache`, `normalized`, `display_map`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `events`; `isinstance(cache, RuntimeSQLiteCache)`; `source in HAIRPIN_PARAM_EXCLUDE`.
+      - Iteruje po danych w pętlach typu: `for source in keys`; `for display in HAIRPIN_PARAM_ORDER`; `for display in sorted(normalized.keys(), key=_natural_sort_key)`.
+      - Wykonuje najważniejsze wywołania: `set()`, `getattr()`, `isinstance()`, `sorted()`, `self._configure_stripping_table()`, `HAIRPIN_PARAM_LABELS.get()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._configure_hp_grip_table()` — linie **3749-3766**.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `base_headers`, `columns`, `header`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`.
+      - Iteruje po danych w pętlach typu: `for idx in range(len(columns))`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `table.setColumnCount()`, `table.setHorizontalHeaderLabels()`, `len()`, `table.setColumnHidden()`, `table.horizontalHeader()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._configure_nest_table()` — linie **3768-3785**.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `base_headers`, `columns`, `header`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`.
+      - Iteruje po danych w pętlach typu: `for idx in range(len(columns))`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `table.setColumnCount()`, `table.setHorizontalHeaderLabels()`, `len()`, `table.setColumnHidden()`, `table.horizontalHeader()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._configure_stripping_table()` — linie **3787-3804**.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `base_headers`, `columns`, `header`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`.
+      - Iteruje po danych w pętlach typu: `for idx in range(len(columns))`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `table.setColumnCount()`, `table.setHorizontalHeaderLabels()`, `len()`, `table.setColumnHidden()`, `table.horizontalHeader()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._populate_hp_grip_filters()` — linie **3806-3823**.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `hierarchy`, `self._hp_grip_filter_hierarchy`, `machines`, `machine`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'hp_grip_machine')`; `not machine`; `pin`.
+      - Iteruje po danych w pętlach typu: `for event in events`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_combo_items()`, `self._update_hp_grip_pin_options()`, `self._apply_hp_grip_filters()`, `hasattr()`, `str(event.get('machine', '') or '').strip()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_hp_grip_pin_options()` — linie **3825-3834**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for values in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `getattr()`, `self.hp_grip_machine.count()`, `self.hp_grip_machine.currentText().strip()`, `pins.update()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_hp_grip_machine_changed()` — linie **3836-3838**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_hp_grip_pin_options()`, `self._apply_hp_grip_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_hp_grip_filters()` — linie **3840-3883**.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `events`, `machine`, `pin`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`; `machine and machine != '(Wszystkie)' and (event.get('machine') != machine)`; `pin and pin != '(Wszystkie)' and (event.get('pin') != pin)`.
+      - Iteruje po danych w pętlach typu: `for event in events`; `for (row_idx, event) in enumerate(rows)`; `for (offset, key) in enumerate(value_keys)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `rows.sort()`, `table.setRowCount()`, `list()`, `QBrush()`, `enumerate()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._populate_nest_filters()` — linie **3885-3902**.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `hierarchy`, `self._nest_filter_hierarchy`, `machines`, `machine`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'nest_machine')`; `not machine`; `pin`.
+      - Iteruje po danych w pętlach typu: `for event in events`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_combo_items()`, `self._update_nest_pin_options()`, `self._apply_nest_filters()`, `hasattr()`, `str(event.get('machine', '') or '').strip()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_nest_pin_options()` — linie **3904-3913**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for values in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `getattr()`, `self.nest_machine.count()`, `self.nest_machine.currentText().strip()`, `pins.update()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_nest_machine_changed()` — linie **3915-3917**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_nest_pin_options()`, `self._apply_nest_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_nest_filters()` — linie **3919-3962**.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `events`, `machine`, `pin`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`; `machine and machine != '(Wszystkie)' and (event.get('machine') != machine)`; `pin and pin != '(Wszystkie)' and (event.get('pin') != pin)`.
+      - Iteruje po danych w pętlach typu: `for event in events`; `for (row_idx, event) in enumerate(rows)`; `for (offset, key) in enumerate(value_keys)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `rows.sort()`, `table.setRowCount()`, `list()`, `QBrush()`, `enumerate()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._populate_stripping_filters()` — linie **3964-3981**.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `hierarchy`, `self._hairpin_filter_hierarchy`, `machines`, `machine`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'stripping_machine')`; `not machine`; `pin`.
+      - Iteruje po danych w pętlach typu: `for event in events`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_combo_items()`, `self._update_stripping_pin_options()`, `self._apply_stripping_filters()`, `hasattr()`, `str(event.get('machine', '') or '').strip()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_stripping_pin_options()` — linie **3983-3992**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `pins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for values in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `getattr()`, `self.stripping_machine.count()`, `self.stripping_machine.currentText().strip()`, `pins.update()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_stripping_machine_changed()` — linie **3994-3996**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_stripping_pin_options()`, `self._apply_stripping_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_stripping_filters()` — linie **3998-4044**.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `events`, `machine`, `pin`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`; `machine and machine != '(Wszystkie)' and (event.get('machine') != machine)`; `pin and pin != '(Wszystkie)' and (event.get('pin') != pin)`.
+      - Iteruje po danych w pętlach typu: `for event in events`; `for (row_idx, event) in enumerate(rows)`; `for (offset, key) in enumerate(value_keys)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `rows.sort()`, `table.setRowCount()`, `list()`, `QBrush()`, `enumerate()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._pareto_target_label()` — linie **4046-4053**.
+      - Przyjmuje parametry: `row`.
+      - Buduje/aktualizuje kluczowe zmienne: `text`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not isinstance(row, dict)`; `text`.
+      - Iteruje po danych w pętlach typu: `for key in ('maszyna_opis', 'machine_actual', 'sap_mapped', 'maszyna_sap')`.
+      - Wykonuje najważniejsze wywołania: `isinstance()`, `str(row.get(key, '') or '').strip()`, `str()`, `row.get()`.
+      - Zwraca m.in.: `''` / `text`.
+    - `Metoda MainWindowHandlers._pareto_source_label()` — linie **4055-4062**.
+      - Przyjmuje parametry: `row`.
+      - Buduje/aktualizuje kluczowe zmienne: `text`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not isinstance(row, dict)`; `text`.
+      - Iteruje po danych w pętlach typu: `for key in ('source_opis', 'machine_source', 'source_mapped')`.
+      - Wykonuje najważniejsze wywołania: `isinstance()`, `str(row.get(key, '') or '').strip()`, `str()`, `row.get()`.
+      - Zwraca m.in.: `''` / `text`.
+    - `Metoda MainWindowHandlers._populate_pareto_filters()` — linie **4064-4073**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `machines`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'pareto_machine_combo')`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._filter_intranet_rows_for_analysis()`, `self._dedup_intranet_rows()`, `self._set_combo_items()`, `self._update_pareto_chart()`, `hasattr()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_pareto_chart()` — linie **4075-4113**.
+      - Buduje/aktualizuje kluczowe zmienne: `chart`, `rows`, `machine`, `filter_edit`, `name_filter`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `chart is None`; `not rows`; `not effective`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._filter_intranet_rows_for_analysis()`, `self._dedup_intranet_rows()`, `chart.set_data()`, `hasattr()`, `self.pareto_machine_combo.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._populate_param_card_filters()` — linie **4115-4177**.
+      - Buduje/aktualizuje kluczowe zmienne: `dt_combo`, `machine_combo`, `cache`, `self.param_card_groups`, `self.param_card_selection`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `dt_combo is None or machine_combo is None`; `isinstance(cache, RuntimeSQLiteCache)`; `not groups`.
+      - Iteruje po danych w pętlach typu: `for machine in machine_keys`; `for snap in snaps`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `isinstance()`, `dt_combo.blockSignals()`, `machine_combo.blockSignals()`, `dt_combo.clear()`, `machine_combo.clear()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_param_card_datetime_changed()` — linie **4179-4198**.
+      - Przyjmuje parametry: `index`.
+      - Buduje/aktualizuje kluczowe zmienne: `dt_combo`, `machine_combo`, `dt`, `machine`, `machine_str`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `dt_combo is None or machine_combo is None`; `index < 0`; `not isinstance(dt, datetime)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `dt_combo.itemData()`, `machine_combo.currentData()`, `self._set_param_card_group()`, `isinstance()`, `machine_combo.currentText()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_param_card_datetime_options()` — linie **4200-4229**.
+      - Przyjmuje parametry: `machine_key`.
+      - Buduje/aktualizuje kluczowe zmienne: `dt_combo`, `groups`, `machine_map`, `sorted_datetimes`, `label`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `dt_combo is None`; `not machine_map`; `dt_combo.count()`.
+      - Iteruje po danych w pętlach typu: `for dt in sorted_datetimes`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `dt_combo.blockSignals()`, `dt_combo.clear()`, `groups.get()`, `dt_combo.setEnabled()`, `dt_combo.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_param_card_machine_changed()` — linie **4231-4249**.
+      - Przyjmuje parametry: `index`.
+      - Buduje/aktualizuje kluczowe zmienne: `dt_combo`, `machine_combo`, `machine`, `machine_key`, `text`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `dt_combo is None or machine_combo is None`; `index < 0`; `machine is None`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `machine_combo.itemData()`, `self._update_param_card_datetime_options()`, `dt_combo.blockSignals()`, `dt_combo.clear()`, `dt_combo.addItem()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._set_param_card_group()` — linie **4251-4394**.
+      - Przyjmuje parametry: `dt`, `machine`.
+      - Buduje/aktualizuje kluczowe zmienne: `groups`, `snaps`, `self._param_card_index_lookup`, `self._param_card_grip_lookup`, `self._param_card_nest_lookup`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `dt is not None and machine is not None`; `export_btn is not None`; `not snaps and dt is not None and (machine is not None)`.
+      - Iteruje po danych w pętlach typu: `for ((program, table_name, step_value), idx_snap) in (self._param_card_index_lookup…`; `for source in struct_sources`; `for idx_snap in self._fetch_index_snapshots(machine=machine_norm, dt=dt)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._update_param_card_table()`, `export_btn.setEnabled()`, `machine or ''.strip()`, `set()`, `self._param_card_index_lookup or {}.items()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._param_card_header_labels()` — linie **4396-4424**.
+      - Przyjmuje parametry: `value_names`.
+      - Buduje/aktualizuje kluczowe zmienne: `index_labels`, `index_map`, `hairpin_labels`, `hairpin_map`, `labels`.
+      - Iteruje po danych w pętlach typu: `for name in value_names`.
+      - Wykonuje najważniejsze wywołania: `dict()`, `zip()`, `labels.append()`, `index_map.get()`, `hairpin_map.get()`.
+      - Zwraca m.in.: `labels`.
+    - `Metoda MainWindowHandlers._update_param_card_table()` — linie **4426-4504**.
+      - Przyjmuje parametry: `snaps`.
+      - Buduje/aktualizuje kluczowe zmienne: `table`, `info`, `machine`, `programs`, `tables`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `table is None`; `not snaps`; `programs`.
+      - Iteruje po danych w pętlach typu: `for snap in sorted_snaps`; `for (row_idx, row_values) in enumerate(rows)`; `for name in value_names`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `sorted()`, `info_lines.append()`, `list()`, `table.setUpdatesEnabled()`, `table.setRowCount()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._param_card_struct_text()` — linie **4506-4508**.
+      - Przyjmuje parametry: `value`.
+      - Buduje/aktualizuje kluczowe zmienne: `text`.
+      - Wykonuje najważniejsze wywołania: `self._format_struct_value()`.
+      - Zwraca m.in.: `'' if text == '(brak)' else text`.
+    - `Metoda MainWindowHandlers._param_card_find_struct_snapshot()` — linie **4510-4530**.
+      - Przyjmuje parametry: `lookup`, `program_key`, `pin_key`.
+      - Buduje/aktualizuje kluczowe zmienne: `direct`, `pin_norm`, `program_matches`, `pin_matches`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `direct is not None`; `pin_norm`; `len(program_matches) == 1`.
+      - Wykonuje najważniejsze wywołania: `lookup.get()`, `(pin_key or '').strip().lower()`, `len()`, `next()`, `pin_key or ''.strip()`, `lookup.items()`.
+      - Zwraca m.in.: `None` / `direct` / `program_matches[0]`.
+    - `Metoda MainWindowHandlers._param_card_cell_text()` — linie **4532-4633**.
+      - Przyjmuje parametry: `snap`, `name`.
+      - Buduje/aktualizuje kluczowe zmienne: `program_key`, `pin_key`, `include`, `value`, `mode`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `name in PARAM_DISPLAY_ORDER`; `name in INDEX_PARAM_DISPLAY_ORDER`; `name in GRIP_PARAM_ORDER`.
+      - Iteruje po danych w pętlach typu: `for (raw_key, display) in HAIRPIN_PARAM_LABELS.items()`.
+      - Wykonuje najważniejsze wywołania: `snap.program or ''.strip()`, `snap.pin or ''.strip()`, `bool()`, `snap.values.get()`, `str(snap.modes.get(name, '') or '').upper()`, `snap.table or ''.strip()`.
+      - Zwraca m.in.: `''` / `value_txt` / `self._param_card_struct_text(struct_snap.values.get(name, ''))`.
+    - `Metoda MainWindowHandlers._populate_index_line_filters()` — linie **4635-4663**.
+      - Buduje/aktualizuje kluczowe zmienne: `cache`, `self._index_line_hierarchy`, `(start_dt, end_dt, machines_filter)`, `hierarchy`, `snaps`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'index_line_machine')`; `isinstance(cache, RuntimeSQLiteCache)`; `not machine`.
+      - Iteruje po danych w pętlach typu: `for snap in snaps`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `isinstance()`, `self._set_combo_items()`, `self._update_index_line_table_options()`, `hasattr()`, `self._analysis_cache_filters()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_index_line_table_options()` — linie **4665-4677**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `tables`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'index_line_machine')`; `machine and machine != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for machine_tables in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `self._update_index_line_step_options()`, `hasattr()`, `getattr()`, `self.index_line_machine.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._update_index_line_step_options()` — linie **4679-4701**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `table`, `steps`, `machine_tables`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'index_line_step')`; `machine and machine != '(Wszystkie)'`; `table and table != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for values in machine_tables.values()`; `for machine_tables in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `hasattr()`, `getattr()`, `self.index_line_machine.count()`, `self.index_line_machine.currentText().strip()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_index_line_machine_changed()` — linie **4703-4704**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_index_line_table_options()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_index_line_pin_changed()` — linie **4706-4707**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_index_line_step_options()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_index_line_filters()` — linie **4709-4746**.
+      - Buduje/aktualizuje kluczowe zmienne: `charts`, `machine`, `table`, `step`, `step_value`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not charts`; `step and step != '(Wszystkie)'`; `name == INDEX_OVERRIDE_LABEL`.
+      - Iteruje po danych w pętlach typu: `for (name, chart) in charts.items()`; `for snap in snaps`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._fetch_index_snapshots()`, `charts.items()`, `self.index_line_machine.count()`, `self.index_line_machine.currentText().strip()`, `self.index_line_pin.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._clear_index_line_charts()` — linie **4748-4753**.
+      - Buduje/aktualizuje kluczowe zmienne: `charts`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not charts`.
+      - Iteruje po danych w pętlach typu: `for (name, chart) in charts.items()`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `charts.items()`, `chart.set_series()`, `self._index_line_colors.get()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._populate_index_filters()` — linie **4755-4776**.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `hierarchy`, `self._index_filter_hierarchy`, `machines`, `machine`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `event.get('type') != 'index_change'`; `params`.
+      - Iteruje po danych w pętlach typu: `for event in events`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_combo_items()`, `self._update_index_table_options()`, `str(event.get('machine', '') or '').strip()`, `str(event.get('table', '') or '').strip()`, `event.get()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._update_index_table_options()` — linie **4778-4788**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `tables`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for machine_tables in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `self._update_index_step_options()`, `getattr()`, `self.idx_f_machine.count()`, `self.idx_f_machine.currentText().strip()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._update_index_step_options()` — linie **4790-4811**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `table`, `steps`, `machine_tables`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`; `table and table != '(Wszystkie)'`.
+      - Iteruje po danych w pętlach typu: `for table_steps in machine_tables.values()`; `for machine_tables in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `self._update_index_param_options()`, `getattr()`, `self.idx_f_machine.count()`, `self.idx_f_machine.currentText().strip()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._update_index_param_options()` — linie **4813-4843**.
+      - Buduje/aktualizuje kluczowe zmienne: `hierarchy`, `machine`, `table`, `step`, `params`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine and machine != '(Wszystkie)'`; `table and table != '(Wszystkie)'`; `step and step != '(Wszystkie)' and (step_key != step)`.
+      - Iteruje po danych w pętlach typu: `for (step_key, values) in table_map.items()`; `for table_steps in machine_tables.values()`; `for machine_tables in hierarchy.values()`.
+      - Wykonuje najważniejsze wywołania: `set()`, `self._set_combo_items()`, `getattr()`, `self.idx_f_machine.count()`, `self.idx_f_machine.currentText().strip()`, `self.idx_f_table.count()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_index_machine_changed()` — linie **4845-4847**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_index_table_options()`, `self._apply_index_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_index_table_changed()` — linie **4849-4851**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_index_step_options()`, `self._apply_index_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._on_index_step_changed()` — linie **4853-4855**.
+      - Przyjmuje parametry: `index`.
+      - Wykonuje najważniejsze wywołania: `self._update_index_param_options()`, `self._apply_index_filters()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_index_filters()` — linie **4857-4912**.
+      - Buduje/aktualizuje kluczowe zmienne: `m`, `table`, `st`, `par`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not hasattr(self, 'index_events')`; `getattr(self, '_index_auto_resize', False)`; `e.get('type') != 'index_change'`.
+      - Iteruje po danych w pętlach typu: `for e in getattr(self, 'index_events', [])`; `for (i, e) in enumerate(rows)`; `for (j, name) in enumerate(params)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self.index_table.setRowCount()`, `QBrush()`, `enumerate()`, `hasattr()`, `self.idx_f_machine.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._format_index_value()` — linie **4914-4926**.
+      - Przyjmuje parametry: `include`, `value`, `mode`.
+      - Buduje/aktualizuje kluczowe zmienne: `mode_txt`, `val_txt`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not include`; `mode_txt`; `val_txt`.
+      - Wykonuje najważniejsze wywołania: `mode or ''.upper()`, `str()`.
+      - Zwraca m.in.: `val_txt` / `'wył.'` / `f'({mode_txt})'`.
+    - `Metoda MainWindowHandlers._format_override_value()` — linie **4928-4934**.
+      - Przyjmuje parametry: `value`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `value is None`.
+      - Wykonuje najważniejsze wywołania: `str()`.
+      - Zwraca m.in.: `'(brak)'` / `f'{value:g}'` / `str(value)`.
+    - `Metoda MainWindowHandlers._normalize_struct_scalar()` — linie **4937-4950**.
+      - Przyjmuje parametry: `value`.
+      - Buduje/aktualizuje kluczowe zmienne: `text`, `candidate`, `normalized`, `formatted`, `dec`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not text`; `'.' in formatted`.
+      - Wykonuje najważniejsze wywołania: `str(value or '').strip()`, `text.replace()`, `dec.normalize()`, `format()`, `Decimal()`, `formatted.rstrip('0').rstrip()`.
+      - Zwraca m.in.: `formatted or '0'` / `''` / `text.lower()`.
+    - `Metoda MainWindowHandlers._format_struct_value()` — linie **4953-4966**.
+      - Przyjmuje parametry: `value`.
+      - Buduje/aktualizuje kluczowe zmienne: `text`, `candidate`, `normalized`, `formatted`, `dec`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not text`; `'.' in formatted`.
+      - Wykonuje najważniejsze wywołania: `str(value or '').strip()`, `text.replace()`, `dec.normalize()`, `format()`, `Decimal()`, `formatted.rstrip('0').rstrip()`.
+      - Zwraca m.in.: `formatted or '0'` / `'(brak)'` / `text`.
+    - `Metoda MainWindowHandlers._build_struct_change_events()` — linie **4968-5022**.
+      - Przyjmuje parametry: `snaps`.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `last_state`, `baseline_done`, `idx`, `key`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not isinstance(snap, (GripSnapshot, HairpinSnapshot, NestSnapshot))`; `key not in baseline_done`; `prev is None`.
+      - Iteruje po danych w pętlach typu: `for snap in snaps`; `for name in sorted(set(prev_values.keys()) | set(curr_values.keys()),…`.
+      - Wykonuje najważniejsze wywołania: `set()`, `events.sort()`, `self._yield_ui()`, `last_state.get()`, `sorted()`, `isinstance()`.
+      - Zwraca m.in.: `events`.
+    - `Metoda MainWindowHandlers._build_index_events()` — linie **5024-5124**.
+      - Przyjmuje parametry: `snaps`, `threshold_pct`.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `last_state`, `last_prog`, `baseline_done`, `idx`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `key not in baseline_done`; `prev is None`; `last_prog.get(key) != s.program`.
+      - Iteruje po danych w pętlach typu: `for s in snaps`; `for name in INDEX_PARAM_DISPLAY_ORDER`.
+      - Wykonuje najważniejsze wywołania: `set()`, `events.sort()`, `self._deduplicate_index_events()`, `self._collapse_repeated_index_events()`, `self._yield_ui()`, `last_state.get()`.
+      - Zwraca m.in.: `self._collapse_repeated_index_events(deduped)`.
+    - `Metoda MainWindowHandlers._normalize_event_text()` — linie **5127-5145**.
+      - Przyjmuje parametry: `value`.
+      - Buduje/aktualizuje kluczowe zmienne: `candidate`, `normalized`, `formatted`, `text`, `dec`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `value is None`; `isinstance(value, str)`; `not text`.
+      - Wykonuje najważniejsze wywołania: `isinstance()`, `text.replace()`, `dec.normalize()`, `format()`, `value.strip()`, `str(value).strip()`.
+      - Zwraca m.in.: `formatted or '0'` / `''` / `text.lower()`.
+    - `Metoda MainWindowHandlers._event_dt_key()` — linie **5148-5151**.
+      - Przyjmuje parametry: `value`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `isinstance(value, datetime)`.
+      - Wykonuje najważniejsze wywołania: `isinstance()`, `value.replace()`.
+      - Zwraca m.in.: `value` / `value.replace(microsecond=0)`.
+    - `Metoda MainWindowHandlers._merge_event_paths()` — linie **5153-5165**.
+      - Przyjmuje parametry: `existing`, `duplicate`.
+      - Buduje/aktualizuje kluczowe zmienne: `current`, `new_path`, `paths`, `existing['path']`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not new_path`; `not current`; `new_path in paths`.
+      - Wykonuje najważniejsze wywołania: `self._normalize_event_text()`, `paths.append()`, `'\n'.join()`, `existing.get()`, `duplicate.get()`, `line.strip()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._deduplicate_param_events()` — linie **5167-5194**.
+      - Przyjmuje parametry: `events`.
+      - Buduje/aktualizuje kluczowe zmienne: `seen`, `deduped`, `order`, `idx`, `cols`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `event.get('type') != 'change'`; `existing is not None`.
+      - Iteruje po danych w pętlach typu: `for event in events`.
+      - Wykonuje najważniejsze wywołania: `tuple()`, `self._yield_ui()`, `seen.get()`, `deduped.append()`, `event.get()`, `self._event_dt_key()`.
+      - Zwraca m.in.: `deduped`.
+    - `Metoda MainWindowHandlers._deduplicate_index_events()` — linie **5196-5236**.
+      - Przyjmuje parametry: `events`.
+      - Buduje/aktualizuje kluczowe zmienne: `seen`, `deduped`, `order`, `merged`, `logger`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `merged`; `event.get('type') != 'index_change'`; `existing is not None`.
+      - Iteruje po danych w pętlach typu: `for event in events`.
+      - Wykonuje najważniejsze wywołania: `tuple()`, `logging.getLogger()`, `self._yield_ui()`, `seen.get()`, `deduped.append()`, `logger.info()`.
+      - Zwraca m.in.: `deduped`.
+    - `Metoda MainWindowHandlers._collapse_repeated_index_events()` — linie **5238-5285**.
+      - Przyjmuje parametry: `events`.
+      - Buduje/aktualizuje kluczowe zmienne: `order`, `collapsed`, `last_signature`, `logger`, `repeats`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `repeats`; `event.get('type') != 'index_change'`; `previous and previous[0] == signature`.
+      - Iteruje po danych w pętlach typu: `for event in events`.
+      - Wykonuje najważniejsze wywołania: `tuple()`, `logging.getLogger()`, `self._normalize_event_text()`, `last_signature.get()`, `collapsed.append()`, `logger.info()`.
+      - Zwraca m.in.: `collapsed`.
+    - `Metoda MainWindowHandlers._fill_change_trees()` — linie **5287-5500**.
+      - Buduje/aktualizuje kluczowe zmienne: `events`, `change_tree`, `top_tree`, `combo_counts`, `nested`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `change_tree is None or top_tree is None`; `combo_counts`; `machine_totals`.
+      - Iteruje po danych w pętlach typu: `for e in events`; `for machine in sorted(machines_all)`; `for ((machine, pin, step_key, name), cnt) in sorted(combo_counts.items(), key=lambda…`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `sorted()`, `top_tree.clear()`, `change_tree.clear()`, `e.get()`, `cols.items()`.
+      - Zwraca m.in.: `None` / `sum(params_dict.values())` / `sum((step_total(params_dict) for params_dict in steps_dict.values()))`.
+    - `Metoda MainWindowHandlers._on_top_issue_click()` — linie **5502-5542**.
+      - Przyjmuje parametry: `item`, `col`.
+      - Buduje/aktualizuje kluczowe zmienne: `data`, `kind`, `(_, mach, pin, step, par)`, `(_, mach, pin)`, `(_, mach, st)`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not data`; `kind == 'combo'`; `mach`.
+      - Wykonuje najważniejsze wywołania: `item.data()`, `self._apply_analysis_filters()`, `self._set_combo()`, `str()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._on_change_tree_click()` — linie **5544-5574**.
+      - Przyjmuje parametry: `item`, `col`.
+      - Buduje/aktualizuje kluczowe zmienne: `data`, `kind`, `(_, mach, pin)`, `(_, mach, st)`, `(_, mach, pin, st, par)`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not data`; `kind == 'machine'`; `kind == 'pin'`.
+      - Wykonuje najważniejsze wywołania: `item.data()`, `self._apply_analysis_filters()`, `self._set_combo()`, `str()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._set_combo()` — linie **5576-5584**.
+      - Przyjmuje parametry: `combo`, `value`.
+      - Buduje/aktualizuje kluczowe zmienne: `ix`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not combo or combo.count() == 0`; `ix >= 0`.
+      - Wykonuje najważniejsze wywołania: `combo.findText()`, `str()`, `combo.setCurrentIndex()`, `combo.count()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._fill_program_changes_table()` — linie **5586-5595**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `self.program_filtered_rows`.
+      - Iteruje po danych w pętlach typu: `for (i, e) in enumerate(rows)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self.program_table.setRowCount()`, `enumerate()`, `self.program_table.resizeColumnsToContents()`, `len()`, `self.program_table.setItem()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._populate_program_filters()` — linie **5597-5605**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `machines`, `olds`, `news`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_combo_items()`, `e.get()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._populate_trend_filters()` — linie **5607-5614**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `machines`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._set_combo_items()`, `self._log()`, `len()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._apply_trend_filters()` — linie **5616-5766**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `m`, `flt`, `total_minutes`, `target_bins`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not rows`; `(rng_secs <= 0 or start_dt is None or end_dt is None) and flt`; `total_hours > 240`.
+      - Iteruje po danych w pętlach typu: `while cur <= end_norm`; `for f in flt`; `for machine in sorted(per_machine.keys())`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `max()`, `snap_15()`, `self.t_f_machine.count()`, `self.t_f_machine.currentText()`, `self.start_datetime.dateTime().toPyDateTime()`.
+      - Zwraca m.in.: `None` / `int(max(15, min(180, (n + 14) // 15 * 15)))` / `base.strftime('%Y-%m-%d %H:00')`.
+    - `Metoda MainWindowHandlers._apply_program_filters()` — linie **5768-5791**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `m`, `o`, `n`, `flt`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `m != '(Wszystkie)' and e['machine'] != m`; `o != '(Wszystkie)' and e['old_program'] != o`; `n != '(Wszystkie)' and e['new_program'] != n`.
+      - Iteruje po danych w pętlach typu: `for e in rows`; `for (i, e) in enumerate(flt)`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `flt.sort()`, `self.program_table.setRowCount()`, `enumerate()`, `self.program_table.resizeColumnsToContents()`, `self.pg_f_machine.count()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda MainWindowHandlers._export_top_issues_csv()` — linie **5793-5822**.
+      - Buduje/aktualizuje kluczowe zmienne: `tree`, `(path, _)`, `headers`, `w`, `item`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `tree is None or tree.topLevelItemCount() == 0`; `not path`.
+      - Iteruje po danych w pętlach typu: `for i in range(tree.topLevelItemCount())`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `QFileDialog.getSaveFileName()`, `QMessageBox.information()`, `self._log()`, `tree.topLevelItemCount()`, `open()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._export_change_tree_csv()` — linie **5824-5906**.
+      - Buduje/aktualizuje kluczowe zmienne: `tree`, `(path, _)`, `headers`, `label`, `mapping`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `tree is None or tree.topLevelItemCount() == 0`; `not path`; `label.lower().startswith('step ')`.
+      - Iteruje po danych w pętlach typu: `for i in range(tree.topLevelItemCount())`; `for idx in range(item.childCount())`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `QFileDialog.getSaveFileName()`, `QMessageBox.information()`, `text or ''.strip()`, `label.lower().startswith()`, `self._log()`.
+      - Zwraca m.in.: `None` / `label` / `f'Poziom {level + 1}'`.
+    - `Metoda MainWindowHandlers._export_tree_csv()` — linie **5908-5973**.
+      - Buduje/aktualizuje kluczowe zmienne: `tree`, `(path, _)`, `headers`, `w`, `m_item`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `tree is None or tree.topLevelItemCount() == 0`; `not path`.
+      - Iteruje po danych w pętlach typu: `for i in range(tree.topLevelItemCount())`; `for j in range(m_item.childCount())`; `for k in range(d_item.childCount())`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `QFileDialog.getSaveFileName()`, `QMessageBox.information()`, `self._log()`, `tree.topLevelItemCount()`, `open()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._export_analysis_csv()` — linie **5975-6000**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `(path, _)`, `headers`, `w`, `row`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not rows`; `not path`; `e.get('type') != 'change'`.
+      - Iteruje po danych w pętlach typu: `for e in rows`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `QFileDialog.getSaveFileName()`, `QMessageBox.information()`, `self._log()`, `open()`, `csv.writer()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._export_index_csv()` — linie **6002-6030**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `(path, _)`, `headers`, `w`, `row`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not rows`; `not path`; `e.get('type') != 'index_change'`.
+      - Iteruje po danych w pętlach typu: `for e in rows`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `QFileDialog.getSaveFileName()`, `QMessageBox.information()`, `self._log()`, `open()`, `csv.writer()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._export_programs_csv()` — linie **6032-6052**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `(path, _)`, `headers`, `w`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not rows`; `not path`.
+      - Iteruje po danych w pętlach typu: `for e in rows`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `QFileDialog.getSaveFileName()`, `QMessageBox.information()`, `self._log()`, `open()`, `csv.writer()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._export_param_card_csv()` — linie **6054-6135**.
+      - Buduje/aktualizuje kluczowe zmienne: `snaps`, `(path, _)`, `w`, `first`, `machine`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not snaps`; `not path`; `paths`.
+      - Iteruje po danych w pętlach typu: `for snap in sorted_snaps`; `for name in value_names`.
+      - Wykonuje najważniejsze wywołania: `list()`, `QFileDialog.getSaveFileName()`, `getattr()`, `QMessageBox.information()`, `self._log()`, `open()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda MainWindowHandlers._export_intranet_csv()` — linie **6137-6177**.
+      - Buduje/aktualizuje kluczowe zmienne: `rows`, `(path, _)`, `w`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not rows`; `not path`.
+      - Iteruje po danych w pętlach typu: `for i in range(self.intra_table.rowCount())`; `for r in rows`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `QFileDialog.getSaveFileName()`, `QMessageBox.information()`, `self._log()`, `range()`, `open()`.
+      - Zwraca m.in.: `None`.
 
 ## Plik: `hfm_analyzer/gui/main_window.py`
-- **Rola pliku:** Moduł pomocniczy spinający importy i punkty wejścia.
-- **Elementy kodu (z zakresem linii):**
-  - `Funkcja `_label()`` — linie **67-72**. Funkcja/metoda realizuje krok związany z: „label”.
-  - `Klasa `ModernMainWindow`` — linie **75-727**. Klasa odpowiedzialna za obszar: „ModernMainWindow”.
-  - `  - Metoda `ModernMainWindow.__init__()`` — linie **76-653**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `ModernMainWindow._post_init_load()`` — linie **655-703**. Funkcja/metoda realizuje krok związany z: „post init load”.
-  - `  - Metoda `ModernMainWindow._open_line_chart_zoom()`` — linie **705-727**. Funkcja/metoda realizuje krok związany z: „open line chart zoom”.
+- **Rola modułu:** Main window implementation for the HFM Analyzer GUI.
+- **Elementy i działanie:**
+  - `Funkcja _label()` — linie **67-72**.
+    - Przyjmuje parametry: `text`.
+    - Buduje/aktualizuje kluczowe zmienne: `widget`.
+    - Wykonuje najważniejsze wywołania: `QLabel()`, `widget.setStyleSheet()`.
+    - Zwraca m.in.: `widget`.
+  - `Klasa ModernMainWindow` — linie **75-727**.
+    - `Metoda ModernMainWindow.__init__()` — linie **76-653**.
+      - Przyjmuje parametry: `settings`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.settings`, `app`, `self.found_files`, `self._all_machines`, `toolbar`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self.runtime_cache is None`; `app is not None and (not app.windowIcon().isNull())`.
+      - Iteruje po danych w pętlach typu: `for b in (sel_all, desel_all, refresh_btn)`; `for ci in range(self.index_table.columnCount())`; `for (idx, name) in enumerate(PARAM_DISPLAY_ORDER)`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `QApplication.instance()`, `self.setWindowTitle()`, `self.setMinimumSize()`, `self.addToolBar()`, `toolbar.setMovable()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ModernMainWindow._post_init_load()` — linie **655-703**.
+      - Wykonuje najważniejsze wywołania: `self._refresh_base_path_label()`, `self._populate_machines()`, `self._populate_param_line_filters()`, `self._populate_index_line_filters()`, `self._clear_param_line_charts()`, `self._clear_index_line_charts()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ModernMainWindow._open_line_chart_zoom()` — linie **705-727**.
+      - Przyjmuje parametry: `source`, `title`.
+      - Buduje/aktualizuje kluczowe zmienne: `(chart_title, points, color)`, `dialog`, `layout`, `zoom_chart`, `chart_title`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `source is None`; `title`.
+      - Wykonuje najważniejsze wywołania: `source.series_snapshot()`, `QDialog()`, `dialog.setWindowTitle()`, `dialog.setWindowFlags()`, `dialog.setMinimumSize()`, `QVBoxLayout()`.
+      - Zwraca m.in.: `None`.
 
 ## Plik: `hfm_analyzer/gui/tabs/__init__.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu:** brak jawnych funkcji/klas; plik zawiera głównie stałe, importy lub inicjalizację pakietu.
+- **Rola modułu:** Tab widgets exposed by the GUI package.
+- **Elementy:** brak jawnych klas/funkcji (stałe/importy/inicjalizacja).
 
 ## Plik: `hfm_analyzer/gui/tabs/changes_chart_tab.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `ChangesChartTab`` — linie **15-50**. Klasa odpowiedzialna za obszar: „ChangesChartTab”.
-  - `  - Metoda `ChangesChartTab.__init__()`` — linie **18-21**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `ChangesChartTab._build_ui()`` — linie **23-50**. Funkcja/metoda realizuje krok związany z: „build ui”.
+- **Rola modułu:** User interface for the "Wykres zmian" tab.
+- **Elementy i działanie:**
+  - `Klasa ChangesChartTab` — linie **15-50**.
+    - Odpowiedzialność klasy: Displays the native bar chart for change trends..
+    - `Metoda ChangesChartTab.__init__()` — linie **18-21**.
+      - Przyjmuje parametry: `window`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._window`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self._build_ui()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ChangesChartTab._build_ui()` — linie **23-50**.
+      - Buduje/aktualizuje kluczowe zmienne: `window`, `window.trends_tab`, `layout`, `filters`, `window.t_f_machine`.
+      - Wykonuje najważniejsze wywołania: `QVBoxLayout()`, `layout.setContentsMargins()`, `layout.setSpacing()`, `QHBoxLayout()`, `filters.setSpacing()`, `QComboBox()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
 
 ## Plik: `hfm_analyzer/gui/tabs/changes_tab.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `ChangesTab`` — linie **34-310**. Klasa odpowiedzialna za obszar: „ChangesTab”.
-  - `  - Metoda `ChangesTab.__init__()`` — linie **37-45**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `ChangesTab._build_ui()`` — linie **47-310**. Funkcja/metoda realizuje krok związany z: „build ui”.
+- **Rola modułu:** User interface for the "Zmiany" (Changes) tab.
+- **Elementy i działanie:**
+  - `Klasa ChangesTab` — linie **34-310**.
+    - Odpowiedzialność klasy: Encapsulates the "Zmiany" tab content and summary header..
+    - `Metoda ChangesTab.__init__()` — linie **37-45**.
+      - Przyjmuje parametry: `window`, `root_layout`, `filters_box`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._window`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self._build_ui()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ChangesTab._build_ui()` — linie **47-310**.
+      - Przyjmuje parametry: `root_layout`, `filters_box`.
+      - Buduje/aktualizuje kluczowe zmienne: `window`, `window.summary_page`, `sp_layout`, `header_box`, `header_layout`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `QWebEngineView is not None`; `window._use_static_charts`; `window.pie_view`.
+      - Iteruje po danych w pętlach typu: `for widget in (getattr(window, 'pie_view', None), getattr(window, 'line_view',…`; `for column in range(window.top_issues_tree.columnCount())`.
+      - Wykonuje najważniejsze wywołania: `QVBoxLayout()`, `sp_layout.setContentsMargins()`, `sp_layout.setSpacing()`, `QGroupBox()`, `QHBoxLayout()`, `header_layout.setSpacing()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
 
 ## Plik: `hfm_analyzer/gui/tabs/gripper_tab.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `GripperTab`` — linie **21-55**. Klasa odpowiedzialna za obszar: „GripperTab”.
-  - `  - Metoda `GripperTab.__init__()`` — linie **24-27**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `GripperTab._build_ui()`` — linie **29-55**. Funkcja/metoda realizuje krok związany z: „build ui”.
+- **Rola modułu:** User interface for the "Gripper" tab.
+- **Elementy i działanie:**
+  - `Klasa GripperTab` — linie **21-55**.
+    - Odpowiedzialność klasy: Displays gripper statistics and filters..
+    - `Metoda GripperTab.__init__()` — linie **24-27**.
+      - Przyjmuje parametry: `window`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._window`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self._build_ui()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda GripperTab._build_ui()` — linie **29-55**.
+      - Buduje/aktualizuje kluczowe zmienne: `window`, `window.hp_grip_tab`, `layout`, `filters`, `window.hp_grip_machine`.
+      - Wykonuje najważniejsze wywołania: `QVBoxLayout()`, `layout.setContentsMargins()`, `layout.setSpacing()`, `QHBoxLayout()`, `filters.setSpacing()`, `filters.addWidget()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
 
 ## Plik: `hfm_analyzer/gui/tabs/nest_tab.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `NestTab`` — linie **21-55**. Klasa odpowiedzialna za obszar: „NestTab”.
-  - `  - Metoda `NestTab.__init__()`` — linie **24-27**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `NestTab._build_ui()`` — linie **29-55**. Funkcja/metoda realizuje krok związany z: „build ui”.
+- **Rola modułu:** User interface for the "Nest" tab.
+- **Elementy i działanie:**
+  - `Klasa NestTab` — linie **21-55**.
+    - Odpowiedzialność klasy: Displays nest configuration statistics and filters..
+    - `Metoda NestTab.__init__()` — linie **24-27**.
+      - Przyjmuje parametry: `window`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._window`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self._build_ui()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda NestTab._build_ui()` — linie **29-55**.
+      - Buduje/aktualizuje kluczowe zmienne: `window`, `window.nest_tab`, `layout`, `filters`, `window.nest_machine`.
+      - Wykonuje najważniejsze wywołania: `QVBoxLayout()`, `layout.setContentsMargins()`, `layout.setSpacing()`, `QHBoxLayout()`, `filters.setSpacing()`, `filters.addWidget()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
 
 ## Plik: `hfm_analyzer/gui/tabs/parameter_changes_tab.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `ParameterChangesTab`` — linie **25-125**. Klasa odpowiedzialna za obszar: „ParameterChangesTab”.
-  - `  - Metoda `ParameterChangesTab.__init__()`` — linie **28-31**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `ParameterChangesTab._build_ui()`` — linie **33-125**. Funkcja/metoda realizuje krok związany z: „build ui”.
+- **Rola modułu:** User interface for the "Zmiany Parametrów" tab.
+- **Elementy i działanie:**
+  - `Klasa ParameterChangesTab` — linie **25-125**.
+    - Odpowiedzialność klasy: Encapsulates the parameter changes table and filters..
+    - `Metoda ParameterChangesTab.__init__()` — linie **28-31**.
+      - Przyjmuje parametry: `window`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._window`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self._build_ui()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ParameterChangesTab._build_ui()` — linie **33-125**.
+      - Buduje/aktualizuje kluczowe zmienne: `window`, `window.analysis_tab`, `layout`, `filt_row`, `window.f_machine`.
+      - Iteruje po danych w pętlach typu: `for column in range(window.analysis_table.columnCount())`.
+      - Wykonuje najważniejsze wywołania: `QVBoxLayout()`, `layout.setContentsMargins()`, `layout.setSpacing()`, `QHBoxLayout()`, `filt_row.setSpacing()`, `QComboBox()`.
+      - Zwraca m.in.: `widget`.
 
 ## Plik: `hfm_analyzer/gui/tabs/program_changes_tab.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `ProgramChangesTab`` — linie **23-79**. Klasa odpowiedzialna za obszar: „ProgramChangesTab”.
-  - `  - Metoda `ProgramChangesTab.__init__()`` — linie **26-29**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `ProgramChangesTab._build_ui()`` — linie **31-79**. Funkcja/metoda realizuje krok związany z: „build ui”.
+- **Rola modułu:** User interface for the "Zmiany Programów" tab.
+- **Elementy i działanie:**
+  - `Klasa ProgramChangesTab` — linie **23-79**.
+    - Odpowiedzialność klasy: Displays program change history with filtering options..
+    - `Metoda ProgramChangesTab.__init__()` — linie **26-29**.
+      - Przyjmuje parametry: `window`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._window`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self._build_ui()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ProgramChangesTab._build_ui()` — linie **31-79**.
+      - Buduje/aktualizuje kluczowe zmienne: `window`, `window.programs_tab`, `layout`, `filters`, `window.pg_f_machine`.
+      - Iteruje po danych w pętlach typu: `for column in range(4)`.
+      - Wykonuje najważniejsze wywołania: `QVBoxLayout()`, `layout.setContentsMargins()`, `layout.setSpacing()`, `QHBoxLayout()`, `filters.setSpacing()`, `QComboBox()`.
+      - Zwraca m.in.: `widget`.
 
 ## Plik: `hfm_analyzer/gui/tabs/stripping_tab.py`
-- **Rola pliku:** Budowa pojedynczej zakładki interfejsu użytkownika.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `StrippingTab`` — linie **21-55**. Klasa odpowiedzialna za obszar: „StrippingTab”.
-  - `  - Metoda `StrippingTab.__init__()`` — linie **24-27**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `StrippingTab._build_ui()`` — linie **29-55**. Funkcja/metoda realizuje krok związany z: „build ui”.
+- **Rola modułu:** User interface for the "Odizolowanie" tab.
+- **Elementy i działanie:**
+  - `Klasa StrippingTab` — linie **21-55**.
+    - Odpowiedzialność klasy: Displays stripping statistics and filters..
+    - `Metoda StrippingTab.__init__()` — linie **24-27**.
+      - Przyjmuje parametry: `window`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._window`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self._build_ui()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda StrippingTab._build_ui()` — linie **29-55**.
+      - Buduje/aktualizuje kluczowe zmienne: `window`, `window.stripping_tab`, `layout`, `filters`, `window.stripping_machine`.
+      - Wykonuje najważniejsze wywołania: `QVBoxLayout()`, `layout.setContentsMargins()`, `layout.setSpacing()`, `QHBoxLayout()`, `filters.setSpacing()`, `filters.addWidget()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
 
 ## Plik: `hfm_analyzer/gui/utils.py`
-- **Rola pliku:** Narzędzia GUI: sortowanie naturalne i pomoc przy mapowaniu dysków sieciowych.
-- **Elementy kodu (z zakresem linii):**
-  - `Funkcja `_available_drive_letters()`` — linie **38-64**. Funkcja/metoda realizuje krok związany z: „available drive letters”.
-  - `Funkcja `_maybe_offer_drive_mapping()`` — linie **67-137**. Funkcja/metoda realizuje krok związany z: „maybe offer drive mapping”.
-  - `Funkcja `_natural_sort_key()`` — linie **140-157**. Funkcja/metoda realizuje krok związany z: „natural sort key”.
+- **Rola modułu:** Utility helpers and shared constants for the GUI package.
+- **Elementy i działanie:**
+  - `Funkcja _available_drive_letters()` — linie **38-64**.
+    - Buduje/aktualizuje kluczowe zmienne: `used_letters`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `os.name != 'nt'`; `letter < 'D'`; `os.path.exists(f'{letter}:\\')`.
+    - Iteruje po danych w pętlach typu: `for letter in string.ascii_uppercase`; `for (_, drive, _) in list_mapped_network_drives()`.
+    - Wykonuje najważniejsze wywołania: `set()`, `list_mapped_network_drives()`, `used_letters.add()`, `os.path.exists()`, `drive.rstrip(':').upper()`, `drive.rstrip()`.
+    - Zwraca m.in.: `[letter for letter in string.ascii_uppercase if 'D' <= letter <= 'Z' and letter…` / `[]`.
+  - `Funkcja _maybe_offer_drive_mapping()` — linie **67-137**.
+    - Przyjmuje parametry: `parent`, `path`, `fast`.
+    - Buduje/aktualizuje kluczowe zmienne: `normalized_original`, `normalized_mapped`, `share`, `answer`, `available`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not path`; `not normalized_original.startswith('\\\\')`; `normalized_mapped != normalized_original`.
+    - Wykonuje najważniejsze wywołania: `path.replace()`, `mapped.replace()`, `extract_unc_share()`, `QMessageBox.question()`, `_available_drive_letters()`, `QInputDialog.getItem()`.
+    - Zwraca m.in.: `mapped` / `path` / `map_unc_to_drive_if_possible(path)`.
+  - `Funkcja _natural_sort_key()` — linie **140-157**.
+    - Przyjmuje parametry: `value`.
+    - Buduje/aktualizuje kluczowe zmienne: `parts`, `key`, `value`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not isinstance(value, str)`; `part == ''`; `part.isdigit()`.
+    - Iteruje po danych w pętlach typu: `for part in parts`.
+    - Wykonuje najważniejsze wywołania: `re.split()`, `tuple()`, `isinstance()`, `str()`, `part.isdigit()`, `key.append()`.
+    - Zwraca m.in.: `tuple(key)`.
 
 ## Plik: `hfm_analyzer/gui/widgets.py`
-- **Rola pliku:** Własne widżety wykresów (pie/bar/pareto/line) i delegaty rysowania.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `PieChartWidget`` — linie **18-145**. Klasa odpowiedzialna za obszar: „PieChartWidget”.
-  - `  - Metoda `PieChartWidget.__init__()`` — linie **21-31**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `PieChartWidget.set_data()`` — linie **33-40**. Funkcja/metoda realizuje krok związany z: „set data”.
-  - `  - Metoda `PieChartWidget.set_colors()`` — linie **42-49**. Funkcja/metoda realizuje krok związany z: „set colors”.
-  - `  - Metoda `PieChartWidget.paintEvent()`` — linie **51-97**. Funkcja/metoda realizuje krok związany z: „paintEvent”.
-  - `  - Metoda `PieChartWidget.mouseMoveEvent()`` — linie **99-138**. Funkcja/metoda realizuje krok związany z: „mouseMoveEvent”.
-  - `  - Metoda `PieChartWidget.leaveEvent()`` — linie **140-145**. Funkcja/metoda realizuje krok związany z: „leaveEvent”.
-  - `Klasa `BarChartWidget`` — linie **147-450**. Klasa odpowiedzialna za obszar: „BarChartWidget”.
-  - `  - Metoda `BarChartWidget.__init__()`` — linie **150-165**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `BarChartWidget.set_data()`` — linie **167-176**. Funkcja/metoda realizuje krok związany z: „set data”.
-  - `  - Metoda `BarChartWidget.set_colors()`` — linie **178-186**. Funkcja/metoda realizuje krok związany z: „set colors”.
-  - `  - Metoda `BarChartWidget.set_overlay()`` — linie **188-195**. Funkcja/metoda realizuje krok związany z: „set overlay”.
-  - `  - Metoda `BarChartWidget.set_overlay_min_ymax()`` — linie **197-206**. Funkcja/metoda realizuje krok związany z: „set overlay min ymax”.
-  - `  - Metoda `BarChartWidget.paintEvent()`` — linie **208-390**. Funkcja/metoda realizuje krok związany z: „paintEvent”.
-  - `  - Metoda `BarChartWidget.mouseMoveEvent()`` — linie **392-442**. Funkcja/metoda realizuje krok związany z: „mouseMoveEvent”.
-  - `  - Metoda `BarChartWidget.leaveEvent()`` — linie **444-450**. Funkcja/metoda realizuje krok związany z: „leaveEvent”.
-  - `Klasa `ParetoChartWidget`` — linie **452-768**. Klasa odpowiedzialna za obszar: „ParetoChartWidget”.
-  - `  - Metoda `ParetoChartWidget.__init__()`` — linie **455-471**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `ParetoChartWidget.set_data()`` — linie **473-563**. Funkcja/metoda realizuje krok związany z: „set data”.
-  - `  - Metoda `ParetoChartWidget.paintEvent()`` — linie **565-705**. Funkcja/metoda realizuje krok związany z: „paintEvent”.
-  - `  - Metoda `ParetoChartWidget.mouseMoveEvent()`` — linie **707-760**. Funkcja/metoda realizuje krok związany z: „mouseMoveEvent”.
-  - `  - Metoda `ParetoChartWidget.leaveEvent()`` — linie **762-768**. Funkcja/metoda realizuje krok związany z: „leaveEvent”.
-  - `Klasa `LineChartWidget`` — linie **770-983**. Klasa odpowiedzialna za obszar: „LineChartWidget”.
-  - `  - Metoda `LineChartWidget.__init__()`` — linie **773-783**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `LineChartWidget.set_series()`` — linie **785-811**. Funkcja/metoda realizuje krok związany z: „set series”.
-  - `  - Metoda `LineChartWidget.series_snapshot()`` — linie **813-814**. Funkcja/metoda realizuje krok związany z: „series snapshot”.
-  - `  - Metoda `LineChartWidget.paintEvent()`` — linie **816-939**. Funkcja/metoda realizuje krok związany z: „paintEvent”.
-  - `  - Metoda `LineChartWidget.mouseMoveEvent()`` — linie **941-976**. Funkcja/metoda realizuje krok związany z: „mouseMoveEvent”.
-  - `  - Metoda `LineChartWidget.leaveEvent()`` — linie **978-983**. Funkcja/metoda realizuje krok związany z: „leaveEvent”.
-  - `Klasa `CountBadgeDelegate`` — linie **985-1023**. Klasa odpowiedzialna za obszar: „CountBadgeDelegate”.
-  - `  - Metoda `CountBadgeDelegate.paint()`` — linie **988-1020**. Funkcja/metoda realizuje krok związany z: „paint”.
-  - `  - Metoda `CountBadgeDelegate.sizeHint()`` — linie **1022-1023**. Funkcja/metoda realizuje krok związany z: „sizeHint”.
+- **Rola modułu:** GUI widget implementations used throughout the application.
+- **Elementy i działanie:**
+  - `Klasa PieChartWidget` — linie **18-145**.
+    - Odpowiedzialność klasy: Minimal pie chart widget used when WebEngine is unavailable..
+    - `Metoda PieChartWidget.__init__()` — linie **21-31**.
+      - Przyjmuje parametry: `parent`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._data`, `self._colors`, `self._hover_slices`, `self._hover_center`, `self._hover_radius`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self.setMinimumHeight()`, `self.setMouseTracking()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda PieChartWidget.set_data()` — linie **33-40**.
+      - Przyjmuje parametry: `data`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._data`, `self._hover_slices`, `self._hover_center`, `self._hover_radius`, `self._hover_active`.
+      - Wykonuje najważniejsze wywołania: `self.update()`, `dict()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda PieChartWidget.set_colors()` — linie **42-49**.
+      - Przyjmuje parametry: `color_map`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._colors`, `self._hover_slices`, `self._hover_center`, `self._hover_radius`, `self._hover_active`.
+      - Wykonuje najważniejsze wywołania: `dict()`, `self.update()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda PieChartWidget.paintEvent()` — linie **51-97**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `painter`, `rect`, `legend_width`, `chart_rect`, `target_diameter`.
+      - Iteruje po danych w pętlach typu: `for (index, (label, value)) in enumerate(sorted(self._data.items(), key=lambda item:…`.
+      - Wykonuje najważniejsze wywołania: `QPainter()`, `painter.setRenderHint()`, `self.rect().adjusted()`, `rect.adjusted()`, `min()`, `chart_rect.center().y()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda PieChartWidget.mouseMoveEvent()` — linie **99-138**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `pos`, `dx`, `dy`, `angle`, `hit_idx`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self._hover_slices or self._hover_center is None or self._hover_radius <= 0`; `dx * dx + dy * dy > self._hover_radius * self._hover_radius`; `hit_idx is None`.
+      - Iteruje po danych w pętlach typu: `for (idx, (start, end, _, _)) in enumerate(self._hover_slices)`.
+      - Wykonuje najważniejsze wywołania: `event.pos()`, `enumerate()`, `QToolTip.showText()`, `pos.x()`, `self._hover_center.x()`, `pos.y()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda PieChartWidget.leaveEvent()` — linie **140-145**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._hover_active`, `self._hover_index`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._hover_active`.
+      - Wykonuje najważniejsze wywołania: `super().leaveEvent()`, `QToolTip.hideText()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+  - `Klasa BarChartWidget` — linie **147-450**.
+    - Odpowiedzialność klasy: Stacked bar chart used for the activity summary..
+    - `Metoda BarChartWidget.__init__()` — linie **150-165**.
+      - Przyjmuje parametry: `parent`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._x`, `self._series`, `self._colors`, `self._overlay_x`, `self._overlay_y`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self.setMinimumHeight()`, `self.setMouseTracking()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda BarChartWidget.set_data()` — linie **167-176**.
+      - Przyjmuje parametry: `x_labels`, `series`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._x`, `self._series`, `self._hover_bars`, `self._hover_overlay`, `self._hover_rect`.
+      - Wykonuje najważniejsze wywołania: `self.update()`, `list()`, `series or {}.items()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda BarChartWidget.set_colors()` — linie **178-186**.
+      - Przyjmuje parametry: `color_map`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._colors`, `self._hover_bars`, `self._hover_overlay`, `self._hover_rect`, `self._hover_active`.
+      - Wykonuje najważniejsze wywołania: `dict()`, `self.update()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda BarChartWidget.set_overlay()` — linie **188-195**.
+      - Przyjmuje parametry: `x_labels`, `y_values`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._overlay_x`, `self._overlay_y`, `self._hover_overlay`, `self._hover_active`, `self._hover_kind`.
+      - Wykonuje najważniejsze wywołania: `self.update()`, `list()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda BarChartWidget.set_overlay_min_ymax()` — linie **197-206**.
+      - Przyjmuje parametry: `value`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._hover_overlay`, `self._hover_active`, `self._hover_kind`, `self._hover_index`, `self._overlay_min_top`.
+      - Wykonuje najważniejsze wywołania: `self.update()`, `int()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda BarChartWidget.paintEvent()` — linie **208-390**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `painter`, `outer`, `legend_width`, `chart_rect`, `self._hover_rect`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self._x or not self._series`; `self._overlay_min_top and y_max_overlay < self._overlay_min_top`; `y_max_overlay > 0`.
+      - Iteruje po danych w pętlach typu: `for i in range(1, 5)`; `for i in range(0, 6)`; `for (index, label) in enumerate(self._x)`.
+      - Wykonuje najważniejsze wywołania: `QPainter()`, `painter.setRenderHint()`, `self.rect().adjusted()`, `QRectF()`, `painter.fillRect()`, `painter.setPen()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda BarChartWidget.mouseMoveEvent()` — linie **392-442**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `pos`, `best_idx`, `best_dist`, `self._hover_active`, `self._hover_kind`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._hover_rect is None`; `not self._hover_rect.contains(QPointF(pos))`; `self._hover_overlay`.
+      - Iteruje po danych w pętlach typu: `for (idx, (rect, name, label, value)) in enumerate(self._hover_bars)`; `for (idx, (pt, _label, _value)) in enumerate(self._hover_overlay)`.
+      - Wykonuje najważniejsze wywołania: `event.pos()`, `enumerate()`, `self._hover_rect.contains()`, `rect.contains()`, `QToolTip.hideText()`, `QPointF()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda BarChartWidget.leaveEvent()` — linie **444-450**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._hover_active`, `self._hover_kind`, `self._hover_index`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._hover_active`.
+      - Wykonuje najważniejsze wywołania: `super().leaveEvent()`, `QToolTip.hideText()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+  - `Klasa ParetoChartWidget` — linie **452-768**.
+    - Odpowiedzialność klasy: Simple Pareto chart that highlights dominant NOK sources..
+    - `Metoda ParetoChartWidget.__init__()` — linie **455-471**.
+      - Przyjmuje parametry: `parent`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._labels`, `self._values`, `self._cumulative`, `self._series_names`, `self._series_values`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `self.setMinimumHeight()`, `self.setMouseTracking()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ParetoChartWidget.set_data()` — linie **473-563**.
+      - Przyjmuje parametry: `data`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._labels`, `self._values`, `self._cumulative`, `self._series_names`, `self._series_values`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not data`; `is_nested`; `not items`.
+      - Iteruje po danych w pętlach typu: `for (label, mapping) in nested.items()`; `for (_, value, _) in items`; `for (_, _, mapping) in items`.
+      - Wykonuje najważniejsze wywołania: `any()`, `nested.items()`, `items.sort()`, `defaultdict()`, `sorted()`, `self.update()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda ParetoChartWidget.paintEvent()` — linie **565-705**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `painter`, `outer`, `legend_width`, `chart_rect`, `self._hover_rect`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self._labels`; `cumulative_points`; `segments`.
+      - Iteruje po danych w pętlach typu: `for i in range(1, 5)`; `for i in range(0, 6)`; `for (index, label) in enumerate(self._labels)`.
+      - Wykonuje najważniejsze wywołania: `QPainter()`, `painter.setRenderHint()`, `painter.fillRect()`, `self.rect().adjusted()`, `QRectF()`, `painter.setPen()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda ParetoChartWidget.mouseMoveEvent()` — linie **707-760**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `pos`, `best_idx`, `best_dist`, `self._hover_active`, `self._hover_kind`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._hover_rect is None`; `not self._hover_rect.contains(QPointF(pos))`; `self._hover_points`.
+      - Iteruje po danych w pętlach typu: `for (idx, (x_left, x_right, label, segments)) in enumerate(self._hover_bar_groups)`; `for (seg_index, (y_top, y_bottom, series_name, value)) in enumerate(segments)`; `for (idx, (pt, _label, _pct)) in enumerate(self._hover_points)`.
+      - Wykonuje najważniejsze wywołania: `event.pos()`, `enumerate()`, `self._hover_rect.contains()`, `QToolTip.hideText()`, `QPointF()`, `QToolTip.showText()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda ParetoChartWidget.leaveEvent()` — linie **762-768**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._hover_active`, `self._hover_kind`, `self._hover_index`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._hover_active`.
+      - Wykonuje najważniejsze wywołania: `super().leaveEvent()`, `QToolTip.hideText()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+  - `Klasa LineChartWidget` — linie **770-983**.
+    - Odpowiedzialność klasy: Simple line chart widget used for parameter trends when WebEngine is unavailable..
+    - `Metoda LineChartWidget.__init__()` — linie **773-783**.
+      - Przyjmuje parametry: `parent`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._points`, `self._title`, `self._color`, `self._hover_points`, `self._hover_rect`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `QColor()`, `self.setMinimumHeight()`, `self.setMouseTracking()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda LineChartWidget.set_series()` — linie **785-811**.
+      - Przyjmuje parametry: `title`, `points`, `color`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._title`, `cleaned`, `self._points`, `self._hover_points`, `self._hover_rect`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `color is not None`; `not isinstance(dt, datetime)`; `math.isnan(val) or math.isinf(val)`.
+      - Iteruje po danych w pętlach typu: `for (dt, value) in points or []`.
+      - Wykonuje najważniejsze wywołania: `cleaned.sort()`, `self.update()`, `cleaned.append()`, `QColor()`, `isinstance()`, `float()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda LineChartWidget.series_snapshot()` — linie **813-814**.
+      - Wykonuje najważniejsze wywołania: `list()`, `QColor()`.
+      - Zwraca m.in.: `(self._title, list(self._points), QColor(self._color))`.
+    - `Metoda LineChartWidget.paintEvent()` — linie **816-939**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `painter`, `outer`, `title_font`, `body_font`, `chart_rect`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `chart_rect.height() <= 0 or chart_rect.width() <= 0`; `not self._points`; `x_span <= 0`.
+      - Iteruje po danych w pętlach typu: `for i in range(1, 5)`; `for i in range(0, 5)`; `for (offset, value) in zip(x_values, y_values)`.
+      - Wykonuje najważniejsze wywołania: `QPainter()`, `painter.setRenderHint()`, `painter.fillRect()`, `self.rect().adjusted()`, `painter.setPen()`, `painter.setBrush()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda LineChartWidget.mouseMoveEvent()` — linie **941-976**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `pos`, `best_idx`, `best_dist`, `(_, dt_value, y_value)`, `text`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self._hover_points or self._hover_rect is None`; `not self._hover_rect.contains(QPointF(pos))`; `best_dist is None or best_dist > 64.0`.
+      - Iteruje po danych w pętlach typu: `for (idx, (pt, _, _)) in enumerate(self._hover_points)`.
+      - Wykonuje najważniejsze wywołania: `event.pos()`, `enumerate()`, `QToolTip.showText()`, `self._hover_rect.contains()`, `event.globalPos()`, `QToolTip.hideText()`.
+      - Zwraca m.in.: `None`.
+    - `Metoda LineChartWidget.leaveEvent()` — linie **978-983**.
+      - Przyjmuje parametry: `event`.
+      - Buduje/aktualizuje kluczowe zmienne: `self._hover_active`, `self._hover_index`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self._hover_active`.
+      - Wykonuje najważniejsze wywołania: `super().leaveEvent()`, `QToolTip.hideText()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+  - `Klasa CountBadgeDelegate` — linie **985-1023**.
+    - Odpowiedzialność klasy: Delegate drawing circular badges for numeric values in tree widgets..
+    - `Metoda CountBadgeDelegate.paint()` — linie **988-1020**.
+      - Przyjmuje parametry: `painter`, `option`, `index`.
+      - Buduje/aktualizuje kluczowe zmienne: `text`, `bg_brush`, `rect`, `radius`, `border`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `index.column() != 1`; `isinstance(bg_brush, QBrush)`; `isinstance(bg_brush, QColor)`.
+      - Wykonuje najważniejsze wywołania: `index.data()`, `isinstance()`, `option.rect.adjusted()`, `painter.save()`, `painter.setRenderHint()`, `painter.setPen()`.
+      - Zwraca m.in.: `super().paint(painter, option, index)`.
+    - `Metoda CountBadgeDelegate.sizeHint()` — linie **1022-1023**.
+      - Przyjmuje parametry: `option`, `index`.
+      - Wykonuje najważniejsze wywołania: `super().sizeHint()`, `super()`.
+      - Zwraca m.in.: `super().sizeHint(option, index)`.
 
 ## Plik: `hfm_analyzer/models.py`
-- **Rola pliku:** Modele danych (dataclass) reprezentujące odczytane snapshoty.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `FoundFile`` — linie **11-16**. Klasa odpowiedzialna za obszar: „FoundFile”.
-  - `Klasa `ParamSnapshot`` — linie **20-32**. Klasa odpowiedzialna za obszar: „ParamSnapshot”.
-  - `Klasa `IndexSnapshot`` — linie **36-48**. Klasa odpowiedzialna za obszar: „IndexSnapshot”.
-  - `Klasa `GripSnapshot`` — linie **52-60**. Klasa odpowiedzialna za obszar: „GripSnapshot”.
-  - `Klasa `NestSnapshot`` — linie **64-72**. Klasa odpowiedzialna za obszar: „NestSnapshot”.
-  - `Klasa `HairpinSnapshot`` — linie **76-84**. Klasa odpowiedzialna za obszar: „HairpinSnapshot”.
+- **Rola modułu:** Dataclasses used across the HFM Analyzer application.
+- **Elementy i działanie:**
+  - `Klasa FoundFile` — linie **11-16**.
+    - Odpowiedzialność klasy: Descriptor for a backup XML file discovered on disk..
+    - Klasa nie definiuje jawnych metod.
+  - `Klasa ParamSnapshot` — linie **20-32**.
+    - Odpowiedzialność klasy: Single snapshot of parameters extracted from a backup file..
+    - Klasa nie definiuje jawnych metod.
+  - `Klasa IndexSnapshot` — linie **36-48**.
+    - Odpowiedzialność klasy: Snapshot of table index parameters extracted from a backup file..
+    - Klasa nie definiuje jawnych metod.
+  - `Klasa GripSnapshot` — linie **52-60**.
+    - Odpowiedzialność klasy: Snapshot describing HP grip configuration for a specific pin..
+    - Klasa nie definiuje jawnych metod.
+  - `Klasa NestSnapshot` — linie **64-72**.
+    - Odpowiedzialność klasy: Snapshot describing nest configuration for a specific pin..
+    - Klasa nie definiuje jawnych metod.
+  - `Klasa HairpinSnapshot` — linie **76-84**.
+    - Odpowiedzialność klasy: Snapshot describing hairpin manager configuration for a specific pin..
+    - Klasa nie definiuje jawnych metod.
 
 ## Plik: `hfm_analyzer/storage/__init__.py`
-- **Rola pliku:** Plik inicjalizacyjny pakietu.
-- **Elementy kodu:** brak jawnych funkcji/klas; plik zawiera głównie stałe, importy lub inicjalizację pakietu.
+- **Rola modułu:** Storage helpers for runtime analysis data.
+- **Elementy:** brak jawnych klas/funkcji (stałe/importy/inicjalizacja).
 
 ## Plik: `hfm_analyzer/storage/runtime_sqlite_cache.py`
-- **Rola pliku:** Warstwa trwałej/pół-trwałej pamięci podręcznej SQLite dla danych analitycznych.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `RuntimeSQLiteCache`` — linie **24-1282**. Klasa odpowiedzialna za obszar: „RuntimeSQLiteCache”.
-  - `  - Metoda `RuntimeSQLiteCache.__init__()`` — linie **27-41**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `RuntimeSQLiteCache._connect()`` — linie **43-53**. Funkcja/metoda realizuje krok związany z: „connect”.
-  - `  - Metoda `RuntimeSQLiteCache._get_connection()`` — linie **55-60**. Funkcja/metoda realizuje krok związany z: „get connection”.
-  - `  - Metoda `RuntimeSQLiteCache._init_schema()`` — linie **62-220**. Funkcja/metoda realizuje krok związany z: „init schema”.
-  - `  - Metoda `RuntimeSQLiteCache.close()`` — linie **222-237**. Funkcja/metoda realizuje krok związany z: „close”.
-  - `  - Metoda `RuntimeSQLiteCache.reset()`` — linie **239-261**. Funkcja/metoda realizuje krok związany z: „reset”.
-  - `  - Metoda `RuntimeSQLiteCache.purge_older_than()`` — linie **264-329**. Funkcja/metoda realizuje krok związany z: „purge older than”.
-  - `  - Metoda `RuntimeSQLiteCache._ensure_machine()`` — linie **331-352**. Funkcja/metoda realizuje krok związany z: „ensure machine”.
-  - `  - Metoda `RuntimeSQLiteCache._hour_bucket_ts()`` — linie **355-357**. Funkcja/metoda realizuje krok związany z: „hour bucket ts”.
-  - `  - Metoda `RuntimeSQLiteCache.has_hour_bucket()`` — linie **359-397**. Funkcja/metoda realizuje krok związany z: „has hour bucket”.
-  - `  - Metoda `RuntimeSQLiteCache.record_hour_bucket()`` — linie **399-407**. Funkcja/metoda realizuje krok związany z: „record hour bucket”.
-  - `  - Metoda `RuntimeSQLiteCache.has_file()`` — linie **409-416**. Funkcja/metoda realizuje krok związany z: „has file”.
-  - `  - Metoda `RuntimeSQLiteCache.record_file()`` — linie **418-440**. Funkcja/metoda realizuje krok związany z: „record file”.
-  - `  - Metoda `RuntimeSQLiteCache._transaction()`` — linie **443-453**. Funkcja/metoda realizuje krok związany z: „transaction”.
-  - `  - Metoda `RuntimeSQLiteCache.insert_param_snapshots()`` — linie **455-495**. Funkcja/metoda realizuje krok związany z: „insert param snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.insert_index_snapshots()`` — linie **497-537**. Funkcja/metoda realizuje krok związany z: „insert index snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.insert_grip_snapshots()`` — linie **539-545**. Funkcja/metoda realizuje krok związany z: „insert grip snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.insert_nest_snapshots()`` — linie **547-553**. Funkcja/metoda realizuje krok związany z: „insert nest snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.insert_hairpin_snapshots()`` — linie **555-561**. Funkcja/metoda realizuje krok związany z: „insert hairpin snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache._insert_struct_snapshots()`` — linie **563-598**. Funkcja/metoda realizuje krok związany z: „insert struct snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.iter_param_snapshots()`` — linie **600-691**. Funkcja/metoda realizuje krok związany z: „iter param snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_param_snapshots()`` — linie **693-714**. Funkcja/metoda realizuje krok związany z: „fetch param snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.iter_index_snapshots()`` — linie **716-805**. Funkcja/metoda realizuje krok związany z: „iter index snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_index_snapshots_list()`` — linie **807-828**. Funkcja/metoda realizuje krok związany z: „fetch index snapshots list”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_struct_snapshots()`` — linie **830-906**. Funkcja/metoda realizuje krok związany z: „fetch struct snapshots”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_struct_value_keys()`` — linie **908-913**. Funkcja/metoda realizuje krok związany z: „fetch struct value keys”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_machine_names()`` — linie **915-918**. Funkcja/metoda realizuje krok związany z: „fetch machine names”.
-  - `  - Metoda `RuntimeSQLiteCache._parse_file_dt()`` — linie **921-935**. Funkcja/metoda realizuje krok związany z: „parse file dt”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_files()`` — linie **937-971**. Funkcja/metoda realizuje krok związany z: „fetch files”.
-  - `  - Metoda `RuntimeSQLiteCache.insert_intranet_rows()`` — linie **973-1021**. Funkcja/metoda realizuje krok związany z: „insert intranet rows”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_intranet_rows()`` — linie **1023-1070**. Funkcja/metoda realizuje krok związany z: „fetch intranet rows”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_time_bounds()`` — linie **1072-1116**. Funkcja/metoda realizuje krok związany z: „fetch time bounds”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_param_line_hierarchy()`` — linie **1118-1164**. Funkcja/metoda realizuje krok związany z: „fetch param line hierarchy”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_index_line_hierarchy()`` — linie **1166-1212**. Funkcja/metoda realizuje krok związany z: „fetch index line hierarchy”.
-  - `  - Metoda `RuntimeSQLiteCache.fetch_param_card_groups()`` — linie **1214-1267**. Funkcja/metoda realizuje krok związany z: „fetch param card groups”.
-  - `  - Metoda `RuntimeSQLiteCache.stats()`` — linie **1269-1282**. Funkcja/metoda realizuje krok związany z: „stats”.
+- **Rola modułu:** Runtime SQLite cache used to store analysis snapshots during the app session.
+- **Elementy i działanie:**
+  - `Klasa RuntimeSQLiteCache` — linie **24-1282**.
+    - Odpowiedzialność klasy: SQLite-backed cache for analysis snapshots..
+    - `Metoda RuntimeSQLiteCache.__init__()` — linie **27-41**.
+      - Przyjmuje parametry: `path`, `persistent`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.persistent`, `pid`, `self.path`, `self._local`, `self._connections`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `path is None`.
+      - Wykonuje najważniejsze wywołania: `os.getpid()`, `threading.local()`, `threading.Lock()`, `self._connect()`, `self._init_schema()`, `tempfile.gettempdir()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda RuntimeSQLiteCache._connect()` — linie **43-53**.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conn.row_factory`.
+      - Wykonuje najważniejsze wywołania: `sqlite3.connect()`, `conn.execute()`, `self._connections.append()`.
+      - Zwraca m.in.: `conn`.
+    - `Metoda RuntimeSQLiteCache._get_connection()` — linie **55-60**.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `self._local.conn`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `conn is None`.
+      - Wykonuje najważniejsze wywołania: `getattr()`, `self._connect()`.
+      - Zwraca m.in.: `conn`.
+    - `Metoda RuntimeSQLiteCache._init_schema()` — linie **62-220**.
+      - Przyjmuje parametry: `conn`.
+      - Wykonuje najważniejsze wywołania: `conn.executescript()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda RuntimeSQLiteCache.close()` — linie **222-237**.
+      - Buduje/aktualizuje kluczowe zmienne: `conns`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not self.persistent`.
+      - Iteruje po danych w pętlach typu: `for conn in conns`.
+      - Wykonuje najważniejsze wywołania: `list()`, `self._connections.clear()`, `conn.close()`, `os.remove()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda RuntimeSQLiteCache.reset()` — linie **239-261**.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.executescript()`, `self._machine_cache.clear()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda RuntimeSQLiteCache.purge_older_than()` — linie **264-329**.
+      - Przyjmuje parametry: `path`, `cutoff`.
+      - Buduje/aktualizuje kluczowe zmienne: `results`, `conn`, `conn.row_factory`, `cutoff_ts`, `row`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not path or not os.path.exists(path)`.
+      - Iteruje po danych w pętlach typu: `for table in ('param_snapshots', 'index_snapshots', 'grip_snapshots',…`.
+      - Wykonuje najważniejsze wywołania: `sqlite3.connect()`, `conn.execute()`, `cutoff.isoformat()`, `os.path.exists()`, `conn.execute(f'SELECT COUNT(*) AS cnt FROM {table}…()`, `conn.close()`.
+      - Zwraca m.in.: `results`.
+      - W sytuacjach wyjątkowych może zgłosić: `raise`.
+    - `Metoda RuntimeSQLiteCache._ensure_machine()` — linie **331-352**.
+      - Przyjmuje parametry: `name`.
+      - Buduje/aktualizuje kluczowe zmienne: `key`, `conn`, `cached`, `cur`, `row`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `cached is not None`; `row`; `row is None`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `self._machine_cache.get()`, `conn.execute()`, `cur.fetchone()`, `int()`, `RuntimeError()`.
+      - Zwraca m.in.: `machine_id` / `cached`.
+      - W sytuacjach wyjątkowych może zgłosić: `RuntimeError('Nie udało się zapisać maszyny w cache SQLite.')`.
+    - `Metoda RuntimeSQLiteCache._hour_bucket_ts()` — linie **355-357**.
+      - Przyjmuje parametry: `dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `bucket`.
+      - Wykonuje najważniejsze wywołania: `dt.replace()`, `bucket.isoformat()`.
+      - Zwraca m.in.: `bucket.isoformat()`.
+    - `Metoda RuntimeSQLiteCache.has_hour_bucket()` — linie **359-397**.
+      - Przyjmuje parametry: `machine`, `dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_id`, `conn`, `bucket_ts`, `cur`, `end`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `cur.fetchone() is not None`.
+      - Iteruje po danych w pętlach typu: `for table in ('param_snapshots', 'index_snapshots', 'grip_snapshots',…`.
+      - Wykonuje najważniejsze wywołania: `self._ensure_machine()`, `self._get_connection()`, `self._hour_bucket_ts()`, `conn.execute()`, `start.isoformat()`, `end.isoformat()`.
+      - Zwraca m.in.: `False` / `True`.
+    - `Metoda RuntimeSQLiteCache.record_hour_bucket()` — linie **399-407**.
+      - Przyjmuje parametry: `machine`, `dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_id`, `conn`, `bucket_ts`.
+      - Wykonuje najważniejsze wywołania: `self._ensure_machine()`, `self._get_connection()`, `self._hour_bucket_ts()`, `conn.execute()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda RuntimeSQLiteCache.has_file()` — linie **409-416**.
+      - Przyjmuje parametry: `machine`, `path`, `mtime`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_id`, `conn`, `cur`.
+      - Wykonuje najważniejsze wywołania: `self._ensure_machine()`, `self._get_connection()`, `conn.execute()`, `cur.fetchone()`.
+      - Zwraca m.in.: `cur.fetchone() is not None`.
+    - `Metoda RuntimeSQLiteCache.record_file()` — linie **418-440**.
+      - Przyjmuje parametry: `machine`, `path`, `mtime`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_id`, `conn`, `cur`, `row`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `row`; `row is None`.
+      - Wykonuje najważniejsze wywołania: `self._ensure_machine()`, `self._get_connection()`, `conn.execute()`, `cur.fetchone()`, `int()`, `RuntimeError()`.
+      - Zwraca m.in.: `int(row['id'])`.
+      - W sytuacjach wyjątkowych może zgłosić: `RuntimeError('Nie udało się zapisać pliku w cache SQLite.')`.
+    - `Metoda RuntimeSQLiteCache._transaction()` — linie **443-453**.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+      - W sytuacjach wyjątkowych może zgłosić: `raise`.
+    - `Metoda RuntimeSQLiteCache.insert_param_snapshots()` — linie **455-495**.
+      - Przyjmuje parametry: `file_id`, `machine`, `snapshots`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_id`, `total`, `cur`, `snap_id`, `values`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `values`.
+      - Iteruje po danych w pętlach typu: `for snap in snapshots`; `for (name, value) in snap.values.items()`.
+      - Wykonuje najważniejsze wywołania: `self._ensure_machine()`, `self._transaction()`, `conn.execute()`, `int()`, `snap.values.items()`, `values.append()`.
+      - Zwraca m.in.: `total`.
+    - `Metoda RuntimeSQLiteCache.insert_index_snapshots()` — linie **497-537**.
+      - Przyjmuje parametry: `file_id`, `machine`, `snapshots`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_id`, `total`, `cur`, `snap_id`, `values`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `values`.
+      - Iteruje po danych w pętlach typu: `for snap in snapshots`; `for (name, value) in snap.values.items()`.
+      - Wykonuje najważniejsze wywołania: `self._ensure_machine()`, `self._transaction()`, `conn.execute()`, `int()`, `snap.values.items()`, `values.append()`.
+      - Zwraca m.in.: `total`.
+    - `Metoda RuntimeSQLiteCache.insert_grip_snapshots()` — linie **539-545**.
+      - Przyjmuje parametry: `file_id`, `machine`, `snapshots`.
+      - Wykonuje najważniejsze wywołania: `self._insert_struct_snapshots()`.
+      - Zwraca m.in.: `self._insert_struct_snapshots(file_id, machine, snapshots, 'grip')`.
+    - `Metoda RuntimeSQLiteCache.insert_nest_snapshots()` — linie **547-553**.
+      - Przyjmuje parametry: `file_id`, `machine`, `snapshots`.
+      - Wykonuje najważniejsze wywołania: `self._insert_struct_snapshots()`.
+      - Zwraca m.in.: `self._insert_struct_snapshots(file_id, machine, snapshots, 'nest')`.
+    - `Metoda RuntimeSQLiteCache.insert_hairpin_snapshots()` — linie **555-561**.
+      - Przyjmuje parametry: `file_id`, `machine`, `snapshots`.
+      - Wykonuje najważniejsze wywołania: `self._insert_struct_snapshots()`.
+      - Zwraca m.in.: `self._insert_struct_snapshots(file_id, machine, snapshots, 'hairpin')`.
+    - `Metoda RuntimeSQLiteCache._insert_struct_snapshots()` — linie **563-598**.
+      - Przyjmuje parametry: `file_id`, `machine`, `snapshots`, `prefix`.
+      - Buduje/aktualizuje kluczowe zmienne: `machine_id`, `total`, `cur`, `snap_id`, `values`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `values`.
+      - Iteruje po danych w pętlach typu: `for snap in snapshots`.
+      - Wykonuje najważniejsze wywołania: `self._ensure_machine()`, `self._transaction()`, `conn.execute()`, `int()`, `conn.executemany()`, `snap.dt.isoformat()`.
+      - Zwraca m.in.: `total`.
+    - `Metoda RuntimeSQLiteCache.iter_param_snapshots()` — linie **600-691**.
+      - Przyjmuje parametry: `machine`, `machines`, `pin`, `step`, `dt`, `start_dt`, `end_dt`, `order_by_ts`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `order`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine is not None`; `machines`; `pin is not None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `conditions.append()`, `params.append()`, `', '.join()`, `params.extend()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda RuntimeSQLiteCache.fetch_param_snapshots()` — linie **693-714**.
+      - Przyjmuje parametry: `machine`, `machines`, `pin`, `step`, `dt`, `start_dt`, `end_dt`.
+      - Wykonuje najważniejsze wywołania: `list()`, `self.iter_param_snapshots()`.
+      - Zwraca m.in.: `list(self.iter_param_snapshots(machine=machine, machines=machines, pin=pin,…`.
+    - `Metoda RuntimeSQLiteCache.iter_index_snapshots()` — linie **716-805**.
+      - Przyjmuje parametry: `machine`, `machines`, `table`, `step`, `dt`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `query`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine is not None`; `machines`; `table is not None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `conditions.append()`, `params.append()`, `', '.join()`, `params.extend()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda RuntimeSQLiteCache.fetch_index_snapshots_list()` — linie **807-828**.
+      - Przyjmuje parametry: `machine`, `machines`, `table`, `step`, `dt`, `start_dt`, `end_dt`.
+      - Wykonuje najważniejsze wywołania: `list()`, `self.iter_index_snapshots()`.
+      - Zwraca m.in.: `list(self.iter_index_snapshots(machine=machine, machines=machines, table=table,…`.
+    - `Metoda RuntimeSQLiteCache.fetch_struct_snapshots()` — linie **830-906**.
+      - Przyjmuje parametry: `prefix`, `machine`, `machines`, `pin`, `dt`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `query`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine is not None`; `machines`; `pin is not None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `conditions.append()`, `params.append()`, `snapshots.append()`, `', '.join()`.
+      - Zwraca m.in.: `snapshots`.
+    - `Metoda RuntimeSQLiteCache.fetch_struct_value_keys()` — linie **908-913**.
+      - Przyjmuje parametry: `prefix`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`.
+      - Zwraca m.in.: `[row['param_name'] for row in rows]`.
+    - `Metoda RuntimeSQLiteCache.fetch_machine_names()` — linie **915-918**.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute('SELECT name FROM machines ORDER BY…()`, `conn.execute()`.
+      - Zwraca m.in.: `[row['name'] for row in rows if row['name']]`.
+    - `Metoda RuntimeSQLiteCache._parse_file_dt()` — linie **921-935**.
+      - Przyjmuje parametry: `path`.
+      - Buduje/aktualizuje kluczowe zmienne: `parts`, `dt_str`, `name`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not name`; `len(parts) < 3`.
+      - Wykonuje najważniejsze wywołania: `name.split()`, `os.path.basename()`, `len()`, `parts[2].replace()`, `datetime.strptime()`.
+      - Zwraca m.in.: `None` / `datetime.strptime(dt_str, '%Y-%m-%d_%H-%M-%S')`.
+    - `Metoda RuntimeSQLiteCache.fetch_files()` — linie **937-971**.
+      - Przyjmuje parametry: `machines`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machines`; `machine_list`; `dt is None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `results.sort()`, `self._parse_file_dt()`, `results.append()`, `', '.join()`.
+      - Zwraca m.in.: `results`.
+    - `Metoda RuntimeSQLiteCache.insert_intranet_rows()` — linie **973-1021**.
+      - Przyjmuje parametry: `rows`, `line_id`.
+      - Buduje/aktualizuje kluczowe zmienne: `items`, `values`, `lid`, `dt`, `ts`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not items`; `not values`; `not isinstance(rec, dict)`.
+      - Iteruje po danych w pętlach typu: `for rec in items`.
+      - Wykonuje najważniejsze wywołania: `list()`, `int()`, `rec.get()`, `isinstance()`, `str(rec.get('serial_no', '') or '').strip()`, `str(rec.get('judge', '') or '').strip()`.
+      - Zwraca m.in.: `int(inserted)` / `0`.
+    - `Metoda RuntimeSQLiteCache.fetch_intranet_rows()` — linie **1023-1070**.
+      - Przyjmuje parametry: `start_dt`, `end_dt`, `line_id`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `line_id is not None`; `start_dt is not None`; `end_dt is not None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `conditions.append()`, `params.append()`, `results.append()`, `start_dt.isoformat()`.
+      - Zwraca m.in.: `results`.
+    - `Metoda RuntimeSQLiteCache.fetch_time_bounds()` — linie **1072-1116**.
+      - Przyjmuje parametry: `machines`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `min_dt`, `max_dt`, `machine_list`, `tables`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machine_list`; `not row`; `min_ts`.
+      - Iteruje po danych w pętlach typu: `for table in tables`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute(f'SELECT MIN(s.ts) AS min_ts, MAX(s.ts)…()`, `', '.join()`, `params.extend()`, `conn.execute()`, `datetime.fromisoformat()`.
+      - Zwraca m.in.: `(min_dt, max_dt)`.
+    - `Metoda RuntimeSQLiteCache.fetch_param_line_hierarchy()` — linie **1118-1164**.
+      - Przyjmuje parametry: `machines`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machines`; `start_dt is not None`; `end_dt is not None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `conditions.append()`, `params.append()`, `row['machine'] or ''.strip()`, `row['pin'] or ''.strip()`.
+      - Zwraca m.in.: `hierarchy`.
+    - `Metoda RuntimeSQLiteCache.fetch_index_line_hierarchy()` — linie **1166-1212**.
+      - Przyjmuje parametry: `machines`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machines`; `start_dt is not None`; `end_dt is not None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `conditions.append()`, `params.append()`, `row['machine'] or ''.strip()`, `row['table_name'] or ''.strip()`.
+      - Zwraca m.in.: `hierarchy`.
+    - `Metoda RuntimeSQLiteCache.fetch_param_card_groups()` — linie **1214-1267**.
+      - Przyjmuje parametry: `machines`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `conditions`, `params`, `where`, `rows`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `machines`; `start_dt is not None`; `end_dt is not None`.
+      - Iteruje po danych w pętlach typu: `for row in rows`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute()`, `conditions.append()`, `params.append()`, `datetime.fromisoformat()`, `groups.setdefault(machine, []).append()`.
+      - Zwraca m.in.: `groups`.
+    - `Metoda RuntimeSQLiteCache.stats()` — linie **1269-1282**.
+      - Buduje/aktualizuje kluczowe zmienne: `conn`, `stats`, `row`, `stats[name]`.
+      - Iteruje po danych w pętlach typu: `for (name, table) in (('params', 'param_snapshots'), ('index', 'index_snapshots'),…`.
+      - Wykonuje najważniejsze wywołania: `self._get_connection()`, `conn.execute(f'SELECT COUNT(*) AS cnt FROM…()`, `int()`, `conn.execute()`.
+      - Zwraca m.in.: `stats`.
 
 ## Plik: `hfm_analyzer/utils.py`
-- **Rola pliku:** Niskopoziomowe narzędzia systemowe i sieciowe (UNC, mapowanie dysków, dostępność).
-- **Elementy kodu (z zakresem linii):**
-  - `Funkcja `_split_unc()`` — linie **11-16**. Funkcja/metoda realizuje krok związany z: „split unc”.
-  - `Funkcja `_core_unc()`` — linie **19-23**. Funkcja/metoda realizuje krok związany z: „core unc”.
-  - `Funkcja `_core_and_rest()`` — linie **26-34**. Funkcja/metoda realizuje krok związany z: „core and rest”.
-  - `Funkcja `extract_unc_share()`` — linie **37-43**. Funkcja/metoda realizuje krok związany z: „extract unc share”.
-  - `Funkcja `list_mapped_network_drives()`` — linie **46-103**. Funkcja/metoda realizuje krok związany z: „list mapped network drives”.
-  - `Funkcja `map_unc_to_drive_if_possible()`` — linie **106-139**. Funkcja/metoda realizuje krok związany z: „map unc to drive if possible”.
-  - `Funkcja `map_network_drive()`` — linie **142-159**. Funkcja/metoda realizuje krok związany z: „map network drive”.
-  - `Funkcja `network_path_available()`` — linie **162-170**. Funkcja/metoda realizuje krok związany z: „network path available”.
-  - `Funkcja `sqlite_cache_available()`` — linie **173-188**. Funkcja/metoda realizuje krok związany z: „sqlite cache available”.
+- **Rola modułu:** Miscellaneous helper utilities used across modules.
+- **Elementy i działanie:**
+  - `Funkcja _split_unc()` — linie **11-16**.
+    - Przyjmuje parametry: `entry`.
+    - Buduje/aktualizuje kluczowe zmienne: `replaced`, `parts`.
+    - Iteruje po danych w pętlach typu: `while replaced.startswith('\\')`.
+    - Wykonuje najważniejsze wywołania: `entry.replace()`, `replaced.startswith()`, `replaced.split()`.
+    - Zwraca m.in.: `parts`.
+  - `Funkcja _core_unc()` — linie **19-23**.
+    - Przyjmuje parametry: `entry`.
+    - Buduje/aktualizuje kluczowe zmienne: `parts`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `len(parts) >= 2`.
+    - Wykonuje najważniejsze wywołania: `_split_unc()`, `len()`, `parts[0] + '\\' + parts[1].lower()`, `parts[0].lower()`.
+    - Zwraca m.in.: `parts[0].lower() if parts else ''` / `(parts[0] + '\\' + parts[1]).lower()`.
+  - `Funkcja _core_and_rest()` — linie **26-34**.
+    - Przyjmuje parametry: `entry`.
+    - Buduje/aktualizuje kluczowe zmienne: `parts`, `core`, `rest`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `len(parts) >= 2`; `parts`.
+    - Wykonuje najważniejsze wywołania: `_split_unc()`, `len()`, `parts[0] + '\\' + parts[1].lower()`, `'\\'.join()`, `parts[0].lower()`.
+    - Zwraca m.in.: `('', '')` / `(core, rest)` / `(parts[0].lower(), '')`.
+  - `Funkcja extract_unc_share()` — linie **37-43**.
+    - Przyjmuje parametry: `entry`.
+    - Buduje/aktualizuje kluczowe zmienne: `parts`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `len(parts) >= 2`.
+    - Wykonuje najważniejsze wywołania: `_split_unc()`, `len()`.
+    - Zwraca m.in.: `''` / `f'\\\\{parts[0]}\\{parts[1]}'`.
+  - `Funkcja list_mapped_network_drives()` — linie **46-103**.
+    - Buduje/aktualizuje kluczowe zmienne: `mappings`, `c`, `normalised`, `unc`, `letter`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not mappings`; `unc and letter`; `len(parts) >= 2`.
+    - Iteruje po danych w pętlach typu: `for drv in c.Win32_LogicalDisk(DriveType=4)`; `for line in out.splitlines()`.
+    - Wykonuje najważniejsze wywołania: `_normalized()`, `wmi.WMI()`, `c.Win32_LogicalDisk()`, `normalised.sort()`, `drv.ProviderName or ''.rstrip()`, `drv.DeviceID or ''.strip()`.
+    - Zwraca m.in.: `_normalized(mappings)` / `normalised` / `parts`.
+  - `Funkcja map_unc_to_drive_if_possible()` — linie **106-139**.
+    - Przyjmuje parametry: `path`.
+    - Buduje/aktualizuje kluczowe zmienne: `(core, rest)`, `replaced`, `parts`, `core`, `rest`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not path`; `not core`; `len(parts) >= 2`.
+    - Iteruje po danych w pętlach typu: `for (unc_core, drive) in list_mapped_network_drives()`; `while replaced.startswith('\\')`.
+    - Wykonuje najważniejsze wywołania: `_core_unc()`, `list_mapped_network_drives()`, `entry.replace()`, `replaced.startswith()`, `_split_unc()`, `len()`.
+    - Zwraca m.in.: `path` / `parts` / `('', '')`.
+  - `Funkcja map_network_drive()` — linie **142-159**.
+    - Przyjmuje parametry: `unc_path`, `drive_letter`, `persistent`.
+    - Buduje/aktualizuje kluczowe zmienne: `letter`, `cmd`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not unc_path or not drive_letter`; `os.name != 'nt'`; `persistent`.
+    - Wykonuje najważniejsze wywołania: `drive_letter.rstrip(':').upper()`, `subprocess.check_call()`, `drive_letter.rstrip()`.
+    - Zwraca m.in.: `False` / `True`.
+  - `Funkcja network_path_available()` — linie **162-170**.
+    - Przyjmuje parametry: `path`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not path`.
+    - Wykonuje najważniejsze wywołania: `os.path.exists()`.
+    - Zwraca m.in.: `False` / `os.path.exists(path)`.
+  - `Funkcja sqlite_cache_available()` — linie **173-188**.
+    - Przyjmuje parametry: `path`.
+    - Buduje/aktualizuje kluczowe zmienne: `conn`.
+    - Podejmuje decyzje m.in. na podstawie warunków: `not path`; `not os.path.exists(path)`.
+    - Wykonuje najważniejsze wywołania: `sqlite3.connect()`, `conn.close()`, `os.path.exists()`.
+    - Zwraca m.in.: `False` / `True`.
 
 ## Plik: `hfm_analyzer/workers.py`
-- **Rola pliku:** Wątki robocze do skanowania plików, analiz i pobierania danych intranetowych.
-- **Elementy kodu (z zakresem linii):**
-  - `Klasa `ScanWorker`` — linie **39-105**. Klasa odpowiedzialna za obszar: „ScanWorker”.
-  - `  - Metoda `ScanWorker.__init__()`` — linie **46-51**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `ScanWorker.run()`` — linie **53-105**. Funkcja/metoda realizuje krok związany z: „run”.
-  - `Klasa `AnalyzeWorker`` — linie **111-744**. Klasa odpowiedzialna za obszar: „AnalyzeWorker”.
-  - `  - Metoda `AnalyzeWorker.__init__()`` — linie **118-145**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `AnalyzeWorker.run()`` — linie **147-246**. Funkcja/metoda realizuje krok związany z: „run”.
-  - `  - Metoda `AnalyzeWorker._analyze_file()`` — linie **249-744**. Funkcja/metoda realizuje krok związany z: „analyze file”.
-  - `Klasa `IntranetWorker`` — linie **747-939**. Klasa odpowiedzialna za obszar: „IntranetWorker”.
-  - `  - Metoda `IntranetWorker.__init__()`` — linie **754-775**. Funkcja/metoda realizuje krok związany z: „init”.
-  - `  - Metoda `IntranetWorker.run()`` — linie **777-783**. Funkcja/metoda realizuje krok związany z: „run”.
-  - `  - Metoda `IntranetWorker._fetch()`` — linie **785-939**. Funkcja/metoda realizuje krok związany z: „fetch”.
+- **Rola modułu:** Background worker threads responsible for I/O bound tasks.
+- **Elementy i działanie:**
+  - `Klasa ScanWorker` — linie **39-105**.
+    - Odpowiedzialność klasy: Scan the backup directory tree for XML files in the selected range..
+    - `Metoda ScanWorker.__init__()` — linie **46-51**.
+      - Przyjmuje parametry: `base_path`, `machines`, `start_dt`, `end_dt`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.base_path`, `self.machines`, `self.start_dt`, `self.end_dt`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `start_dt.replace()`, `end_dt.replace()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda ScanWorker.run()` — linie **53-105**.
+      - Buduje/aktualizuje kluczowe zmienne: `found`, `day`, `total_days`, `day_idx`, `yyyy`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `not os.path.isdir(day_dir)`; `not entry.is_file()`; `not name.startswith(prefix) or not name.endswith('.xml')`.
+      - Iteruje po danych w pętlach typu: `while day <= self.end_dt.date()`; `for machine in self.machines`; `for entry in entries`.
+      - Wykonuje najważniejsze wywołania: `self.start_dt.date()`, `self.finished.emit()`, `self.end_dt.date()`, `self.progress.emit()`, `day.strftime()`, `timedelta()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+  - `Klasa AnalyzeWorker` — linie **111-744**.
+    - Odpowiedzialność klasy: Parse backup XML files and extract parameter snapshots..
+    - `Metoda AnalyzeWorker.__init__()` — linie **118-145**.
+      - Przyjmuje parametry: `files`, `runtime_cache`, `max_workers`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.files`, `self.runtime_cache`, `self.max_workers`, `max_workers`, `env_workers`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `max_workers is None`; `env_workers`; `value > 0`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `list()`, `logging.getLogger(__name__).info()`, `min()`, `os.environ.get()`, `len()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda AnalyzeWorker.run()` — linie **147-246**.
+      - Buduje/aktualizuje kluczowe zmienne: `skipped`, `stored`, `to_process`, `total`, `futures`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `self.runtime_cache.has_file(found_file.machine, found_file.path, mtime)`; `self.runtime_cache.has_hour_bucket(found_file.machine, found_file.dt)`; `param_recs`.
+      - Iteruje po danych w pętlach typu: `for found_file in self.files`; `while index < total and len(pending) < submit_limit`; `while pending`.
+      - Wykonuje najważniejsze wywołania: `len()`, `self.finished.emit()`, `self.runtime_cache.has_file()`, `to_process.append()`, `ThreadPoolExecutor()`, `set()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda AnalyzeWorker._analyze_file()` — linie **249-744**.
+      - Przyjmuje parametry: `found_file`.
+      - Buduje/aktualizuje kluczowe zmienne: `param_records`, `index_records`, `grip_records`, `nest_records`, `hairpin_records`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `LET is not None`; `a_hair is not None`; `a_kin is not None`.
+      - Iteruje po danych w pętlach typu: `for item in iter_items('Item')`; `for array in iter_items('Array')`; `for struct in a_hair.iter('Struct')`.
+      - Wykonuje najważniejsze wywołania: `iter_items()`, `_parse_struct_array()`, `LET.XMLParser()`, `LET.parse(found_file.path, parser=parser).getroot()`, `ET.parse(found_file.path).getroot()`, `raw.strip().replace()`.
+      - Zwraca m.in.: `(param_records, index_records, grip_records, nest_records, hairpin_records)` / `'REL' if text not in {'0', 'false'} else 'ABS'` / `candidates[0] if candidates else 'Pin'`.
+  - `Klasa IntranetWorker` — linie **747-939**.
+    - Odpowiedzialność klasy: Download and parse NOK information from the intranet service..
+    - `Metoda IntranetWorker.__init__()` — linie **754-775**.
+      - Przyjmuje parametry: `url`, `start_dt`, `end_dt`, `line_id`, `timeout_sec`, `excludes`.
+      - Buduje/aktualizuje kluczowe zmienne: `self.url`, `self.start_dt`, `self.end_dt`, `self.line_id`, `self.timeout_sec`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `timeout_val <= 0`.
+      - Wykonuje najważniejsze wywołania: `super().__init__()`, `set()`, `float()`, `super()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda IntranetWorker.run()` — linie **777-783**.
+      - Buduje/aktualizuje kluczowe zmienne: `data`.
+      - Wykonuje najważniejsze wywołania: `self._fetch()`, `self.finished.emit()`, `logging.getLogger(__name__).exception()`, `self.error.emit()`, `str()`, `logging.getLogger()`.
+      - Nie zwraca jawnej wartości; efekt osiąga przez modyfikację stanu, sygnały lub zapis danych.
+    - `Metoda IntranetWorker._fetch()` — linie **785-939**.
+      - Buduje/aktualizuje kluczowe zmienne: `start_date`, `end_date`, `payload`, `encoded`, `request`.
+      - Podejmuje decyzje m.in. na podstawie warunków: `html is None`; `data_rows`; `not header`.
+      - Iteruje po danych w pętlach typu: `for row in rows`; `for row in data_rows`; `for rec in kept`.
+      - Wykonuje najważniejsze wywołania: `self.start_dt.strftime()`, `self.end_dt.strftime()`, `urllib.parse.urlencode(payload).encode()`, `urllib.request.Request()`, `self.progress.emit()`, `_col_index()`.
+      - Zwraca m.in.: `{'series': dict(series), 'rows': rows_out, 'rows_all': entries_all}` / `{'per_day': {}, 'rows': []}` / `-1`.
 
 ## Plik: `main.py`
-- **Rola pliku:** Minimalny punkt startowy aplikacji desktopowej.
-- **Elementy kodu:** brak jawnych funkcji/klas; plik zawiera głównie stałe, importy lub inicjalizację pakietu.
+- **Rola modułu:** CLI entry point for running the HFM Analyzer application.
+- **Elementy:** brak jawnych klas/funkcji (stałe/importy/inicjalizacja).
+
