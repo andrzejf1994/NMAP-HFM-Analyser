@@ -7,11 +7,12 @@ import sqlite3
 import tempfile
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable, Iterator
 
 from hfm_analyzer.constants import INDEX_PARAM_NAMES, PARAM_NAMES
 from hfm_analyzer.models import (
+    FoundFile,
     GripSnapshot,
     HairpinSnapshot,
     IndexSnapshot,
@@ -21,9 +22,10 @@ from hfm_analyzer.models import (
 
 
 class RuntimeSQLiteCache:
-    """Temporary SQLite-backed cache for analysis snapshots."""
+    """SQLite-backed cache for analysis snapshots."""
 
-    def __init__(self, path: str | None = None) -> None:
+    def __init__(self, path: str | None = None, *, persistent: bool = False) -> None:
+        self.persistent = persistent
         pid = os.getpid()
         if path is None:
             base_dir = tempfile.gettempdir()
@@ -192,6 +194,28 @@ class RuntimeSQLiteCache:
                 PRIMARY KEY(snapshot_id, param_name),
                 FOREIGN KEY(snapshot_id) REFERENCES hairpin_snapshots(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS intranet_rows (
+                id INTEGER PRIMARY KEY,
+                line_id INTEGER,
+                ts TEXT NOT NULL,
+                serial_no TEXT NOT NULL,
+                judge TEXT,
+                maszyna_sap TEXT,
+                maszyna_opis TEXT,
+                UNIQUE(line_id, ts, serial_no, judge, maszyna_sap, maszyna_opis)
+            );
+            CREATE INDEX IF NOT EXISTS idx_intranet_ts ON intranet_rows(ts);
+            CREATE INDEX IF NOT EXISTS idx_intranet_serial ON intranet_rows(serial_no);
+
+            CREATE TABLE IF NOT EXISTS hour_buckets (
+                id INTEGER PRIMARY KEY,
+                machine_id INTEGER NOT NULL,
+                ts TEXT NOT NULL,
+                UNIQUE(machine_id, ts),
+                FOREIGN KEY(machine_id) REFERENCES machines(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_hour_buckets_ts ON hour_buckets(ts);
             """
         )
 
@@ -204,12 +228,105 @@ class RuntimeSQLiteCache:
                 conn.close()
             except Exception:
                 pass
+        if not self.persistent:
+            try:
+                os.remove(self.path)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+
+    def reset(self) -> None:
+        """Clear all cached data while keeping the database file."""
+        conn = self._get_connection()
+        with self._write_lock:
+            conn.executescript(
+                """
+                DELETE FROM param_values;
+                DELETE FROM param_snapshots;
+                DELETE FROM index_values;
+                DELETE FROM index_snapshots;
+                DELETE FROM grip_values;
+                DELETE FROM grip_snapshots;
+                DELETE FROM nest_values;
+                DELETE FROM nest_snapshots;
+                DELETE FROM hairpin_values;
+                DELETE FROM hairpin_snapshots;
+                DELETE FROM hour_buckets;
+                DELETE FROM files;
+                DELETE FROM machines;
+                """
+            )
+        with self._machine_lock:
+            self._machine_cache.clear()
+
+    @staticmethod
+    def purge_older_than(path: str, cutoff: datetime) -> dict[str, int]:
+        """Delete data older than cutoff from a persistent database file."""
+        results: dict[str, int] = {}
+        if not path or not os.path.exists(path):
+            return results
+        conn = sqlite3.connect(path)
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.row_factory = sqlite3.Row
+        cutoff_ts = cutoff.isoformat()
         try:
-            os.remove(self.path)
-        except FileNotFoundError:
-            pass
+            for table in (
+                "param_snapshots",
+                "index_snapshots",
+                "grip_snapshots",
+                "nest_snapshots",
+                "hairpin_snapshots",
+                "intranet_rows",
+                "hour_buckets",
+            ):
+                row = conn.execute(
+                    f"SELECT COUNT(*) AS cnt FROM {table} WHERE ts < ?",
+                    (cutoff_ts,),
+                ).fetchone()
+                results[table] = int(row["cnt"]) if row else 0
+
+            conn.execute("BEGIN IMMEDIATE")
+            for table in (
+                "param_snapshots",
+                "index_snapshots",
+                "grip_snapshots",
+                "nest_snapshots",
+                "hairpin_snapshots",
+                "intranet_rows",
+                "hour_buckets",
+            ):
+                conn.execute(f"DELETE FROM {table} WHERE ts < ?", (cutoff_ts,))
+
+            conn.execute(
+                """
+                DELETE FROM files
+                WHERE id NOT IN (
+                    SELECT DISTINCT file_id FROM param_snapshots
+                    UNION
+                    SELECT DISTINCT file_id FROM index_snapshots
+                    UNION
+                    SELECT DISTINCT file_id FROM grip_snapshots
+                    UNION
+                    SELECT DISTINCT file_id FROM nest_snapshots
+                    UNION
+                    SELECT DISTINCT file_id FROM hairpin_snapshots
+                )
+                """
+            )
+            conn.execute(
+                "DELETE FROM machines WHERE id NOT IN (SELECT DISTINCT machine_id FROM files)"
+            )
+            conn.execute("COMMIT")
         except Exception:
-            pass
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return results
 
     def _ensure_machine(self, name: str) -> int:
         key = name or ""
@@ -233,6 +350,61 @@ class RuntimeSQLiteCache:
         with self._machine_lock:
             self._machine_cache[key] = machine_id
         return machine_id
+
+    @staticmethod
+    def _hour_bucket_ts(dt: datetime) -> str:
+        bucket = dt.replace(minute=0, second=0, microsecond=0)
+        return bucket.isoformat()
+
+    def has_hour_bucket(self, machine: str, dt: datetime) -> bool:
+        machine_id = self._ensure_machine(machine)
+        conn = self._get_connection()
+        bucket_ts = self._hour_bucket_ts(dt)
+        cur = conn.execute(
+            "SELECT 1 FROM hour_buckets WHERE machine_id = ? AND ts = ?",
+            (machine_id, bucket_ts),
+        )
+        if cur.fetchone() is not None:
+            return True
+
+        try:
+            start = datetime.fromisoformat(bucket_ts)
+        except Exception:
+            return False
+        end = start + timedelta(hours=1)
+        start_ts = start.isoformat()
+        end_ts = end.isoformat()
+        for table in (
+            "param_snapshots",
+            "index_snapshots",
+            "grip_snapshots",
+            "nest_snapshots",
+            "hairpin_snapshots",
+        ):
+            cur = conn.execute(
+                f"SELECT 1 FROM {table} WHERE machine_id = ? AND ts >= ? AND ts < ? LIMIT 1",
+                (machine_id, start_ts, end_ts),
+            )
+            if cur.fetchone() is not None:
+                try:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO hour_buckets(machine_id, ts) VALUES (?, ?)",
+                        (machine_id, bucket_ts),
+                    )
+                except Exception:
+                    pass
+                return True
+        return False
+
+    def record_hour_bucket(self, machine: str, dt: datetime) -> None:
+        machine_id = self._ensure_machine(machine)
+        conn = self._get_connection()
+        bucket_ts = self._hour_bucket_ts(dt)
+        with self._write_lock:
+            conn.execute(
+                "INSERT OR IGNORE INTO hour_buckets(machine_id, ts) VALUES (?, ?)",
+                (machine_id, bucket_ts),
+            )
 
     def has_file(self, machine: str, path: str, mtime: float) -> bool:
         machine_id = self._ensure_machine(machine)
@@ -429,9 +601,12 @@ class RuntimeSQLiteCache:
         self,
         *,
         machine: str | None = None,
+        machines: Iterable[str] | None = None,
         pin: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
         order_by_ts: bool = True,
     ) -> Iterator[ParamSnapshot]:
         conn = self._get_connection()
@@ -440,6 +615,12 @@ class RuntimeSQLiteCache:
         if machine is not None:
             conditions.append("m.name = ?")
             params.append(machine)
+        if machines:
+            machine_list = [m for m in machines if m]
+            if machine_list:
+                placeholders = ", ".join("?" for _ in machine_list)
+                conditions.append(f"m.name IN ({placeholders})")
+                params.extend(machine_list)
         if pin is not None:
             conditions.append("s.pin = ?")
             params.append(pin)
@@ -449,6 +630,12 @@ class RuntimeSQLiteCache:
         if dt is not None:
             conditions.append("s.ts = ?")
             params.append(dt.isoformat())
+        if start_dt is not None:
+            conditions.append("s.ts >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt is not None:
+            conditions.append("s.ts <= ?")
+            params.append(end_dt.isoformat())
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         order = "ORDER BY s.ts" if order_by_ts else ""
         query = (
@@ -507,19 +694,35 @@ class RuntimeSQLiteCache:
         self,
         *,
         machine: str | None = None,
+        machines: Iterable[str] | None = None,
         pin: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[ParamSnapshot]:
-        return list(self.iter_param_snapshots(machine=machine, pin=pin, step=step, dt=dt))
+        return list(
+            self.iter_param_snapshots(
+                machine=machine,
+                machines=machines,
+                pin=pin,
+                step=step,
+                dt=dt,
+                start_dt=start_dt,
+                end_dt=end_dt,
+            )
+        )
 
     def iter_index_snapshots(
         self,
         *,
         machine: str | None = None,
+        machines: Iterable[str] | None = None,
         table: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[IndexSnapshot]:
         conn = self._get_connection()
         conditions = []
@@ -527,6 +730,12 @@ class RuntimeSQLiteCache:
         if machine is not None:
             conditions.append("m.name = ?")
             params.append(machine)
+        if machines:
+            machine_list = [m for m in machines if m]
+            if machine_list:
+                placeholders = ", ".join("?" for _ in machine_list)
+                conditions.append(f"m.name IN ({placeholders})")
+                params.extend(machine_list)
         if table is not None:
             conditions.append("s.table_name = ?")
             params.append(table)
@@ -536,6 +745,12 @@ class RuntimeSQLiteCache:
         if dt is not None:
             conditions.append("s.ts = ?")
             params.append(dt.isoformat())
+        if start_dt is not None:
+            conditions.append("s.ts >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt is not None:
+            conditions.append("s.ts <= ?")
+            params.append(end_dt.isoformat())
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         query = (
             "SELECT s.id, s.ts, m.name AS machine, s.program, s.table_name, s.step, s.override, f.path, "
@@ -593,19 +808,35 @@ class RuntimeSQLiteCache:
         self,
         *,
         machine: str | None = None,
+        machines: Iterable[str] | None = None,
         table: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[IndexSnapshot]:
-        return list(self.iter_index_snapshots(machine=machine, table=table, step=step, dt=dt))
+        return list(
+            self.iter_index_snapshots(
+                machine=machine,
+                machines=machines,
+                table=table,
+                step=step,
+                dt=dt,
+                start_dt=start_dt,
+                end_dt=end_dt,
+            )
+        )
 
     def fetch_struct_snapshots(
         self,
         prefix: str,
         *,
         machine: str | None = None,
+        machines: Iterable[str] | None = None,
         pin: str | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[GripSnapshot | NestSnapshot | HairpinSnapshot]:
         conn = self._get_connection()
         conditions = []
@@ -613,12 +844,24 @@ class RuntimeSQLiteCache:
         if machine is not None:
             conditions.append("m.name = ?")
             params.append(machine)
+        if machines:
+            machine_list = [m for m in machines if m]
+            if machine_list:
+                placeholders = ", ".join("?" for _ in machine_list)
+                conditions.append(f"m.name IN ({placeholders})")
+                params.extend(machine_list)
         if pin is not None:
             conditions.append("s.pin = ?")
             params.append(pin)
         if dt is not None:
             conditions.append("s.ts = ?")
             params.append(dt.isoformat())
+        if start_dt is not None:
+            conditions.append("s.ts >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt is not None:
+            conditions.append("s.ts <= ?")
+            params.append(end_dt.isoformat())
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         query = (
             f"SELECT s.id, s.ts, m.name AS machine, s.program, s.pin, f.path, "
@@ -669,15 +912,243 @@ class RuntimeSQLiteCache:
         )
         return [row["param_name"] for row in rows]
 
-    def fetch_param_line_hierarchy(self) -> dict[str, dict[str, set[str]]]:
+    def fetch_machine_names(self) -> list[str]:
         conn = self._get_connection()
+        rows = conn.execute("SELECT name FROM machines ORDER BY name").fetchall()
+        return [row["name"] for row in rows if row["name"]]
+
+    @staticmethod
+    def _parse_file_dt(path: str) -> datetime | None:
+        try:
+            name = os.path.basename(path or "")
+        except Exception:
+            name = path or ""
+        if not name:
+            return None
+        parts = name.split("_")
+        if len(parts) < 3:
+            return None
+        dt_str = parts[1] + "_" + parts[2].replace(".xml", "")
+        try:
+            return datetime.strptime(dt_str, "%Y-%m-%d_%H-%M-%S")
+        except Exception:
+            return None
+
+    def fetch_files(
+        self,
+        *,
+        machines: Iterable[str] | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
+    ) -> list[FoundFile]:
+        conn = self._get_connection()
+        conditions = []
+        params: list[object] = []
+        if machines:
+            machine_list = [m for m in machines if m]
+            if machine_list:
+                placeholders = ", ".join("?" for _ in machine_list)
+                conditions.append(f"m.name IN ({placeholders})")
+                params.extend(machine_list)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        rows = conn.execute(
+            "SELECT f.path, m.name AS machine FROM files f JOIN machines m ON f.machine_id = m.id"
+            + where,
+            params,
+        )
+        results: list[FoundFile] = []
+        for row in rows:
+            path = row["path"] or ""
+            dt = self._parse_file_dt(path)
+            if dt is None:
+                continue
+            if start_dt is not None and dt < start_dt:
+                continue
+            if end_dt is not None and dt > end_dt:
+                continue
+            results.append(FoundFile(machine=row["machine"] or "", dt=dt, path=path))
+        results.sort(key=lambda r: (r.dt, r.machine, r.path))
+        return results
+
+    def insert_intranet_rows(
+        self,
+        rows: Iterable[dict],
+        *,
+        line_id: int | None = None,
+    ) -> int:
+        items = list(rows or [])
+        if not items:
+            return 0
+        try:
+            lid = int(line_id or 0)
+        except Exception:
+            lid = 0
+        values: list[tuple[object, ...]] = []
+        for rec in items:
+            if not isinstance(rec, dict):
+                continue
+            dt = rec.get("data")
+            ts = ""
+            if isinstance(dt, datetime):
+                ts = dt.isoformat()
+            elif dt:
+                try:
+                    ts = datetime.fromisoformat(str(dt)).isoformat()
+                except Exception:
+                    ts = ""
+            if not ts:
+                continue
+            serial = str(rec.get("serial_no", "") or "").strip()
+            if not serial:
+                continue
+            judge = str(rec.get("judge", "") or "").strip()
+            masz_sap = str(rec.get("maszyna_sap", "") or "").strip()
+            masz_opis = str(rec.get("maszyna_opis", "") or "").strip()
+            values.append((lid, ts, serial, judge, masz_sap, masz_opis))
+        if not values:
+            return 0
+        with self._transaction() as conn:
+            before = conn.total_changes
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO intranet_rows
+                (line_id, ts, serial_no, judge, maszyna_sap, maszyna_opis)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+            inserted = conn.total_changes - before
+        return int(inserted)
+
+    def fetch_intranet_rows(
+        self,
+        *,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
+        line_id: int | None = None,
+    ) -> list[dict]:
+        conn = self._get_connection()
+        conditions = []
+        params: list[object] = []
+        if line_id is not None:
+            try:
+                conditions.append("line_id = ?")
+                params.append(int(line_id))
+            except Exception:
+                pass
+        if start_dt is not None:
+            conditions.append("ts >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt is not None:
+            conditions.append("ts <= ?")
+            params.append(end_dt.isoformat())
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        rows = conn.execute(
+            "SELECT ts, serial_no, judge, maszyna_sap, maszyna_opis FROM intranet_rows"
+            + where
+            + " ORDER BY ts",
+            params,
+        )
+        results: list[dict] = []
+        for row in rows:
+            ts = row["ts"]
+            try:
+                dt = datetime.fromisoformat(ts) if ts else None
+            except Exception:
+                dt = None
+            if dt is None:
+                continue
+            results.append(
+                {
+                    "data": dt,
+                    "serial_no": row["serial_no"],
+                    "judge": row["judge"],
+                    "maszyna_sap": row["maszyna_sap"],
+                    "maszyna_opis": row["maszyna_opis"],
+                }
+            )
+        return results
+
+    def fetch_time_bounds(
+        self,
+        *,
+        machines: Iterable[str] | None = None,
+    ) -> tuple[datetime | None, datetime | None]:
+        conn = self._get_connection()
+        min_dt: datetime | None = None
+        max_dt: datetime | None = None
+        machine_list = [m for m in (machines or []) if m]
+        tables = (
+            "param_snapshots",
+            "index_snapshots",
+            "grip_snapshots",
+            "nest_snapshots",
+            "hairpin_snapshots",
+        )
+        for table in tables:
+            params: list[object] = []
+            join = ""
+            where = ""
+            if machine_list:
+                join = "JOIN machines m ON s.machine_id = m.id"
+                placeholders = ", ".join("?" for _ in machine_list)
+                where = f"WHERE m.name IN ({placeholders})"
+                params.extend(machine_list)
+            row = conn.execute(
+                f"SELECT MIN(s.ts) AS min_ts, MAX(s.ts) AS max_ts FROM {table} s {join} {where}",
+                params,
+            ).fetchone()
+            if not row:
+                continue
+            min_ts = row["min_ts"]
+            max_ts = row["max_ts"]
+            try:
+                if min_ts:
+                    cur_min = datetime.fromisoformat(min_ts)
+                    if min_dt is None or cur_min < min_dt:
+                        min_dt = cur_min
+                if max_ts:
+                    cur_max = datetime.fromisoformat(max_ts)
+                    if max_dt is None or cur_max > max_dt:
+                        max_dt = cur_max
+            except Exception:
+                continue
+        return min_dt, max_dt
+
+    def fetch_param_line_hierarchy(
+        self,
+        *,
+        machines: Iterable[str] | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
+    ) -> dict[str, dict[str, set[str]]]:
+        conn = self._get_connection()
+        conditions = []
+        params: list[object] = []
+        if machines:
+            machine_list = [m for m in machines if m]
+            if machine_list:
+                placeholders = ", ".join("?" for _ in machine_list)
+                conditions.append(f"m.name IN ({placeholders})")
+                params.extend(machine_list)
+        if start_dt is not None:
+            conditions.append("s.ts >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt is not None:
+            conditions.append("s.ts <= ?")
+            params.append(end_dt.isoformat())
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
         rows = conn.execute(
             """
             SELECT m.name AS machine, s.pin, s.step
             FROM param_snapshots s
             JOIN machines m ON s.machine_id = m.id
-            GROUP BY m.name, s.pin, s.step
             """
+            + where
+            + """
+            GROUP BY m.name, s.pin, s.step
+            """,
+            params,
         )
         hierarchy: dict[str, dict[str, set[str]]] = {}
         for row in rows:
@@ -692,15 +1163,40 @@ class RuntimeSQLiteCache:
                 step_set.add(str(step))
         return hierarchy
 
-    def fetch_index_line_hierarchy(self) -> dict[str, dict[str, set[str]]]:
+    def fetch_index_line_hierarchy(
+        self,
+        *,
+        machines: Iterable[str] | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
+    ) -> dict[str, dict[str, set[str]]]:
         conn = self._get_connection()
+        conditions = []
+        params: list[object] = []
+        if machines:
+            machine_list = [m for m in machines if m]
+            if machine_list:
+                placeholders = ", ".join("?" for _ in machine_list)
+                conditions.append(f"m.name IN ({placeholders})")
+                params.extend(machine_list)
+        if start_dt is not None:
+            conditions.append("s.ts >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt is not None:
+            conditions.append("s.ts <= ?")
+            params.append(end_dt.isoformat())
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
         rows = conn.execute(
             """
             SELECT m.name AS machine, s.table_name, s.step
             FROM index_snapshots s
             JOIN machines m ON s.machine_id = m.id
-            GROUP BY m.name, s.table_name, s.step
             """
+            + where
+            + """
+            GROUP BY m.name, s.table_name, s.step
+            """,
+            params,
         )
         hierarchy: dict[str, dict[str, set[str]]] = {}
         for row in rows:
@@ -715,15 +1211,50 @@ class RuntimeSQLiteCache:
                 step_set.add(str(step))
         return hierarchy
 
-    def fetch_param_card_groups(self) -> dict[str, list[datetime]]:
+    def fetch_param_card_groups(
+        self,
+        *,
+        machines: Iterable[str] | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
+    ) -> dict[str, list[datetime]]:
         conn = self._get_connection()
+        conditions = []
+        params: list[object] = []
+        if machines:
+            machine_list = [m for m in machines if m]
+            if machine_list:
+                placeholders = ", ".join("?" for _ in machine_list)
+                conditions.append(f"m.name IN ({placeholders})")
+                params.extend(machine_list)
+        if start_dt is not None:
+            conditions.append("snap.ts >= ?")
+            params.append(start_dt.isoformat())
+        if end_dt is not None:
+            conditions.append("snap.ts <= ?")
+            params.append(end_dt.isoformat())
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
         rows = conn.execute(
             """
-            SELECT m.name AS machine, s.ts
-            FROM param_snapshots s
-            JOIN machines m ON s.machine_id = m.id
-            GROUP BY m.name, s.ts
+            SELECT m.name AS machine, snap.ts
+            FROM (
+                SELECT machine_id, ts FROM param_snapshots
+                UNION
+                SELECT machine_id, ts FROM index_snapshots
+                UNION
+                SELECT machine_id, ts FROM grip_snapshots
+                UNION
+                SELECT machine_id, ts FROM nest_snapshots
+                UNION
+                SELECT machine_id, ts FROM hairpin_snapshots
+            ) snap
+            JOIN machines m ON snap.machine_id = m.id
             """
+            + where
+            + """
+            GROUP BY m.name, snap.ts
+            """,
+            params,
         )
         groups: dict[str, list[datetime]] = {}
         for row in rows:

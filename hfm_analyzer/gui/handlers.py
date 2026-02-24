@@ -9,13 +9,14 @@ import math
 import os
 import re
 import string
+import tempfile
 import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Iterable, List
 
-from PyQt5.QtCore import QDateTime, QTime, Qt, QPointF, QRectF, QSize
+from PyQt5.QtCore import QDateTime, QTime, Qt, QPointF, QRectF, QSize, QStandardPaths
 from PyQt5.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
@@ -51,6 +52,7 @@ from hfm_analyzer.constants import (
     PARAM_NAMES,
     PARAM_DISPLAY_ORDER,
     SUMMARY_PALETTE,
+    default_cycle_time_sec,
 )
 from hfm_analyzer.models import (
     FoundFile,
@@ -124,26 +126,60 @@ class MainWindowHandlers:
         self,
         *,
         machine: str | None = None,
+        machines: list[str] | None = None,
         pin: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[ParamSnapshot]:
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                return cache.fetch_param_snapshots(machine=machine, pin=pin, step=step, dt=dt)
+                if start_dt is None and end_dt is None:
+                    start_dt, end_dt, default_machines = self._analysis_cache_filters()
+                else:
+                    default_machines = None
+                if machines is None and machine is None:
+                    machines = default_machines
+                return cache.fetch_param_snapshots(
+                    machine=machine,
+                    machines=machines,
+                    pin=pin,
+                    step=step,
+                    dt=dt,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             return list(getattr(self, "param_snapshots", []))
 
     def _fetch_index_snapshots(
         self,
         *,
         machine: str | None = None,
+        machines: list[str] | None = None,
         table: str | None = None,
         step: int | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[IndexSnapshot]:
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                return cache.fetch_index_snapshots_list(machine=machine, table=table, step=step, dt=dt)
+                if start_dt is None and end_dt is None:
+                    start_dt, end_dt, default_machines = self._analysis_cache_filters()
+                else:
+                    default_machines = None
+                if machines is None and machine is None:
+                    machines = default_machines
+                return cache.fetch_index_snapshots_list(
+                    machine=machine,
+                    machines=machines,
+                    table=table,
+                    step=step,
+                    dt=dt,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             return list(getattr(self, "index_snapshots", []))
 
     def _fetch_struct_snapshots(
@@ -151,18 +187,83 @@ class MainWindowHandlers:
         prefix: str,
         *,
         machine: str | None = None,
+        machines: list[str] | None = None,
         pin: str | None = None,
         dt: datetime | None = None,
+        start_dt: datetime | None = None,
+        end_dt: datetime | None = None,
     ) -> list[GripSnapshot | NestSnapshot | HairpinSnapshot]:
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                return cache.fetch_struct_snapshots(prefix, machine=machine, pin=pin, dt=dt)
+                if start_dt is None and end_dt is None:
+                    start_dt, end_dt, default_machines = self._analysis_cache_filters()
+                else:
+                    default_machines = None
+                if machines is None and machine is None:
+                    machines = default_machines
+                return cache.fetch_struct_snapshots(
+                    prefix,
+                    machine=machine,
+                    machines=machines,
+                    pin=pin,
+                    dt=dt,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             attr = {
                 "grip": "hp_grip_snapshots",
                 "nest": "nest_snapshots",
                 "hairpin": "hairpin_snapshots",
             }.get(prefix, "")
             return list(getattr(self, attr, [])) if attr else []
+
+    def _analysis_cache_filters(self) -> tuple[datetime | None, datetime | None, list[str] | None]:
+            start_dt = getattr(self, "_analysis_cache_start", None)
+            end_dt = getattr(self, "_analysis_cache_end", None)
+            machines = getattr(self, "_analysis_cache_machines", None)
+            if machines:
+                machines = [m for m in machines if m]
+            else:
+                machines = None
+            return start_dt, end_dt, machines
+
+    def _current_analysis_range(self) -> tuple[datetime | None, datetime | None]:
+            try:
+                start_dt = self.start_datetime.dateTime().toPyDateTime()
+                end_dt = self.end_datetime.dateTime().toPyDateTime()
+            except Exception:
+                return None, None
+            if start_dt is not None and end_dt is not None and end_dt < start_dt:
+                start_dt, end_dt = end_dt, start_dt
+            return start_dt, end_dt
+
+    def _filter_intranet_rows_for_analysis(self, rows: list[dict]) -> list[dict]:
+            start_dt, end_dt = self._current_analysis_range()
+            if start_dt is None and end_dt is None:
+                return list(rows)
+            filtered: list[dict] = []
+            for rr in rows:
+                dt = rr.get('data')
+                if not isinstance(dt, datetime):
+                    continue
+                if start_dt is not None and dt < start_dt:
+                    continue
+                if end_dt is not None and dt > end_dt:
+                    continue
+                filtered.append(rr)
+            return filtered
+
+    def _dedup_intranet_rows(self, rows: list[dict]) -> list[dict]:
+            sorted_rows = sorted(rows, key=lambda r: r.get('data'))
+            seen = set()
+            deduped: list[dict] = []
+            for rr in sorted_rows:
+                sn = rr.get('serial_no','')
+                if sn in seen:
+                    continue
+                seen.add(sn)
+                deduped.append(rr)
+            return deduped
 
     def _apply_styles(self):
             self.setStyleSheet(
@@ -231,32 +332,237 @@ class MainWindowHandlers:
                 """
             )
 
-    def _log(self, msg: str):
+    def _format_log_message(self, msg: str) -> str:
+            try:
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return msg
+            return f"{ts} {msg}"
+
+    def _append_log(self, msg: str) -> None:
             try:
                 if hasattr(self, 'logs_tab') and self.logs_tab is not None:
-                    self.logs_tab.append(msg)
+                    self.logs_tab.append(self._format_log_message(msg))
             except Exception:
                 pass
+
+    def _log(self, msg: str):
+            self._append_log(msg)
             try:
                 logging.getLogger("backup_analyzer").info(msg)
             except Exception:
                 pass
 
-    def _refresh_base_path_label(self):
-            base_path = self.settings.value("base_path", "", type=str)
-            display_name = self.settings.value("base_path_display_name", "", type=str)
-            display_name = display_name.strip()
-            if display_name:
-                disp = display_name
-            elif base_path:
-                disp = base_path
-            else:
-                disp = "(nie ustawiono)"
+    def _yield_ui(self, counter: int, step: int = 2000) -> None:
+            if counter % step != 0:
+                return
+            try:
+                QApplication.processEvents()
+            except Exception:
+                pass
 
-            self.base_path_label.setText(f"Linia: <b>{disp}</b>")
+    def _is_offline_cache_mode(self) -> bool:
+            try:
+                return bool(self.settings.value("offline_cache_mode", False, type=bool))
+            except Exception:
+                return False
+
+    def _set_offline_cache_mode(self, enabled: bool) -> None:
+            try:
+                self.settings.setValue("offline_cache_mode", bool(enabled))
+            except Exception:
+                pass
+
+    def _on_tree_color_metric_changed(self, _index: int) -> None:
+            try:
+                self._render_summary()
+            except Exception:
+                pass
+
+    def _cycle_time_sec_for_current_line(self) -> float:
+            try:
+                line_id = int(self.settings.value("intranet_line_id", 436, type=int))
+            except Exception:
+                line_id = 436
+            key = f"cycle_time_sec_line_{line_id}"
+            try:
+                value = float(self.settings.value(key, default_cycle_time_sec(line_id), type=int))
+            except Exception:
+                value = float(default_cycle_time_sec(line_id))
+            if value <= 0:
+                value = float(default_cycle_time_sec(line_id))
+            return value
+
+    def _line_presets(self) -> list[dict]:
+            return [
+                {
+                    "label": "BSG EVO",
+                    "path": DEFAULT_PATH_EVO,
+                    "line_id": 424,
+                    "display_name": "BSG EVO",
+                },
+                {
+                    "label": "BSG H66 2",
+                    "path": DEFAULT_PATH_H66_2,
+                    "line_id": 436,
+                    "display_name": "BSG H66 2",
+                },
+            ]
+
+    def _refresh_line_selector(self) -> None:
+            combo = getattr(self, "line_selector", None)
+            if combo is None:
+                return
+            current_path = self.settings.value("base_path", "", type=str) or ""
+            current_display = self.settings.value("base_path_display_name", "", type=str) or ""
+            try:
+                current_line_id = int(self.settings.value("intranet_line_id", 436, type=int))
+            except Exception:
+                current_line_id = 436
+
+            presets = self._line_presets()
+
+            def _norm_path(path: str) -> str:
+                try:
+                    return os.path.normcase(os.path.normpath(path))
+                except Exception:
+                    return (path or "").strip().lower()
+
+            selected_index = -1
+            combo.blockSignals(True)
+            combo.clear()
+            for preset in presets:
+                combo.addItem(preset["label"], preset)
+            current_norm = _norm_path(current_path)
+            for idx, preset in enumerate(presets):
+                if current_display and current_display.strip().lower() == preset["display_name"].lower():
+                    selected_index = idx
+                    break
+                if int(current_line_id) == int(preset["line_id"]):
+                    selected_index = idx
+                    break
+                if current_norm and _norm_path(preset["path"]) == current_norm:
+                    selected_index = idx
+                    break
+            if selected_index < 0:
+                custom_label = (current_display or current_path or "(nie ustawiono)").strip()
+                custom = {
+                    "label": custom_label,
+                    "path": current_path,
+                    "line_id": current_line_id,
+                    "display_name": current_display.strip(),
+                    "custom": True,
+                }
+                combo.addItem(custom_label, custom)
+                selected_index = combo.count() - 1
+            combo.setCurrentIndex(selected_index)
+            try:
+                combo.setToolTip(current_path)
+            except Exception:
+                pass
+            combo.blockSignals(False)
+
+    def _on_line_selector_changed(self, index: int) -> None:
+            combo = getattr(self, "line_selector", None)
+            if combo is None:
+                return
+            if index < 0 or index >= combo.count():
+                return
+            data = combo.itemData(index)
+            if not isinstance(data, dict):
+                return
+            new_path = (data.get("path") or "").strip()
+            new_display = (data.get("display_name") or "").strip()
+            new_line_id = data.get("line_id", None)
+
+            old_path = self.settings.value("base_path", "", type=str)
+            old_display = self.settings.value("base_path_display_name", "", type=str)
+            old_line_id = self.settings.value("intranet_line_id", 436, type=int)
+
+            if new_path:
+                self.settings.setValue("base_path", new_path)
+            if new_display:
+                self.settings.setValue("base_path_display_name", new_display)
+            elif old_display:
+                self.settings.setValue("base_path_display_name", "")
+            if new_line_id is not None:
+                try:
+                    self.settings.setValue("intranet_line_id", int(new_line_id))
+                except Exception:
+                    pass
+
+            new_line_id_val = self.settings.value("intranet_line_id", 436, type=int)
+            new_path_val = self.settings.value("base_path", "", type=str)
+            if new_path_val != old_path or new_line_id_val != old_line_id:
+                self._reset_results_state(clear_found_files=True)
+            self._refresh_base_path_label()
+            self._populate_machines()
+
+    def _refresh_base_path_label(self):
+            try:
+                self._refresh_line_selector()
+            except Exception:
+                pass
+            status_label = getattr(self, "line_status_label", None)
+            if status_label is not None:
+                try:
+                    status_label.setText("(offline)" if self._is_offline_cache_mode() else "")
+                except Exception:
+                    pass
 
     def _get_base_path(self) -> str:
             return self.settings.value("base_path", "", type=str)
+
+    def _default_persistent_cache_path(self) -> str:
+            base = ""
+            try:
+                base = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
+            except Exception:
+                base = ""
+            if not base:
+                try:
+                    base = os.path.join(os.path.expanduser("~"), "HFM Analyzer")
+                except Exception:
+                    base = ""
+            if base:
+                try:
+                    os.makedirs(base, exist_ok=True)
+                except Exception:
+                    pass
+                return os.path.join(base, "hfm_analyzer_cache.sqlite")
+            return os.path.join(tempfile.gettempdir(), "hfm_analyzer_cache.sqlite")
+
+    def _create_runtime_cache(self) -> RuntimeSQLiteCache | None:
+            try:
+                persistent = bool(self.settings.value("cache_persistent", False, type=bool))
+            except Exception:
+                persistent = False
+            path: str | None = None
+            if persistent:
+                try:
+                    path = self.settings.value("cache_path", "", type=str)
+                except Exception:
+                    path = ""
+                path = (path or "").strip()
+                if not path:
+                    path = self._default_persistent_cache_path()
+                    try:
+                        self.settings.setValue("cache_path", path)
+                    except Exception:
+                        pass
+                try:
+                    dir_path = os.path.dirname(path)
+                    if dir_path:
+                        os.makedirs(dir_path, exist_ok=True)
+                except Exception:
+                    pass
+            try:
+                cache = RuntimeSQLiteCache(path=path, persistent=persistent)
+                self.runtime_cache_path = cache.path
+                return cache
+            except Exception:
+                self.runtime_cache_path = ""
+                return None
 
     def _select_all(self):
             for i in range(self.machine_list.count()):
@@ -266,10 +572,115 @@ class MainWindowHandlers:
             for i in range(self.machine_list.count()):
                 self.machine_list.item(i).setSelected(False)
 
+    def _remember_default_date_bounds(self) -> None:
+            if not hasattr(self, "start_datetime") or not hasattr(self, "end_datetime"):
+                return
+            if not hasattr(self, "_default_start_min"):
+                self._default_start_min = self.start_datetime.minimumDateTime()
+                self._default_start_max = self.start_datetime.maximumDateTime()
+                self._default_end_min = self.end_datetime.minimumDateTime()
+                self._default_end_max = self.end_datetime.maximumDateTime()
+
+    def _reset_date_bounds(self) -> None:
+            if not hasattr(self, "start_datetime") or not hasattr(self, "end_datetime"):
+                return
+            self._remember_default_date_bounds()
+            try:
+                self.start_datetime.setMinimumDateTime(self._default_start_min)
+                self.start_datetime.setMaximumDateTime(self._default_start_max)
+                self.end_datetime.setMinimumDateTime(self._default_end_min)
+                self.end_datetime.setMaximumDateTime(self._default_end_max)
+            except Exception:
+                pass
+
+    def _apply_cache_date_bounds(self, min_dt: datetime, max_dt: datetime) -> None:
+            if not hasattr(self, "start_datetime") or not hasattr(self, "end_datetime"):
+                return
+            self._remember_default_date_bounds()
+            try:
+                qmin = QDateTime(min_dt)
+                qmax = QDateTime(max_dt)
+            except Exception:
+                return
+            if qmax < qmin:
+                qmax = qmin
+            try:
+                self.start_datetime.setMinimumDateTime(qmin)
+                self.start_datetime.setMaximumDateTime(qmax)
+                self.end_datetime.setMinimumDateTime(qmin)
+                self.end_datetime.setMaximumDateTime(qmax)
+            except Exception:
+                return
+            try:
+                start = self.start_datetime.dateTime()
+                end = self.end_datetime.dateTime()
+                if start < qmin:
+                    start = qmin
+                if start > qmax:
+                    start = qmax
+                if end < qmin:
+                    end = qmin
+                if end > qmax:
+                    end = qmax
+                if start > end:
+                    start = qmin
+                    end = qmax
+                self.start_datetime.setDateTime(start)
+                self.end_datetime.setDateTime(end)
+            except Exception:
+                pass
+
+    def _populate_machines_from_cache(self) -> bool:
+            cache = getattr(self, "runtime_cache", None)
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache):
+                cache = self._create_runtime_cache()
+                self.runtime_cache = cache
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache) or not cache.persistent:
+                self.machine_list.addItem("(brak trwałej bazy)")
+                self.scan_btn.setEnabled(False)
+                return False
+            try:
+                min_dt, max_dt = cache.fetch_time_bounds()
+            except Exception:
+                min_dt, max_dt = None, None
+            if min_dt is None or max_dt is None:
+                self.machine_list.addItem("(brak danych w bazie)")
+                self.scan_btn.setEnabled(False)
+                return False
+            try:
+                machines = cache.fetch_machine_names()
+            except Exception:
+                machines = []
+            if not machines:
+                self.machine_list.addItem("(brak maszyn w bazie)")
+                self.scan_btn.setEnabled(False)
+                return False
+            for name in machines:
+                self.machine_list.addItem(QListWidgetItem(name))
+            self.scan_btn.setEnabled(True)
+            try:
+                self._select_all()
+            except Exception:
+                pass
+            try:
+                self._apply_cache_date_bounds(min_dt, max_dt)
+            except Exception:
+                pass
+            return True
+
     def _populate_machines(self):
             base_path = self._get_base_path()
             self.machine_list.clear()
             self._all_machines.clear()
+            if self._is_offline_cache_mode():
+                if self._populate_machines_from_cache():
+                    try:
+                        self._refresh_base_path_label()
+                    except Exception:
+                        pass
+                    return
+            if base_path and network_path_available(base_path):
+                self._reset_date_bounds()
             if not base_path or not network_path_available(base_path):
                 self.machine_list.addItem("(brak dostępnych katalogów)")
                 self.scan_btn.setEnabled(False)
@@ -305,18 +716,39 @@ class MainWindowHandlers:
     def _open_settings(self):
             old_path = self.settings.value("base_path", "", type=str)
             old_line_id = self.settings.value("intranet_line_id", 436, type=int)
+            old_cache_persistent = self.settings.value("cache_persistent", False, type=bool)
+            old_cache_path = self.settings.value("cache_path", "", type=str)
             runtime_db_path = getattr(self, "runtime_cache_path", "")
             dlg = SettingsDialog(self.settings, self, runtime_db_path=runtime_db_path)
             if dlg.exec_() == QDialog.Accepted:
                 new_path = self.settings.value("base_path", "", type=str)
                 new_line_id = self.settings.value("intranet_line_id", 436, type=int)
+                new_cache_persistent = self.settings.value("cache_persistent", False, type=bool)
+                new_cache_path = self.settings.value("cache_path", "", type=str)
                 if new_path != old_path or new_line_id != old_line_id:
                     self._reset_results_state(clear_found_files=True)
+                if (
+                    new_cache_persistent != old_cache_persistent
+                    or (new_cache_path or "").strip() != (old_cache_path or "").strip()
+                ):
+                    if not self._is_worker_running('a_worker'):
+                        try:
+                            cache = getattr(self, "runtime_cache", None)
+                            if cache is not None:
+                                cache.close()
+                        except Exception:
+                            pass
+                        self.runtime_cache = self._create_runtime_cache()
+                if not new_cache_persistent:
+                    self._set_offline_cache_mode(False)
                 self._refresh_base_path_label()
                 self._populate_machines()
 
     def _start_scan(self):
             base_path = self._get_base_path()
+            if self._is_offline_cache_mode():
+                self._start_cache_only_analysis()
+                return
             if not network_path_available(base_path):
                 QMessageBox.critical(self, "Błąd", "Katalog bazowy jest niedostępny.")
                 return
@@ -346,6 +778,71 @@ class MainWindowHandlers:
             self.worker.error.connect(self._on_error)
             self.worker.start()
 
+    def _start_cache_only_analysis(self):
+            cache = getattr(self, "runtime_cache", None)
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache):
+                cache = self._create_runtime_cache()
+                self.runtime_cache = cache
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache) or not cache.persistent:
+                QMessageBox.warning(
+                    self,
+                    "Brak bazy",
+                    "Brak dostępu do trwałej bazy danych. Wyłącz tryb offline lub wskaż bazę w ustawieniach.",
+                )
+                return
+            selected = [it.text() for it in self.machine_list.selectedItems() if not it.text().startswith("(")]
+            if not selected:
+                QMessageBox.warning(self, "Wybór maszyn", "Zaznacz co najmniej jedną maszynę.")
+                return
+            start_dt = self.start_datetime.dateTime().toPyDateTime()
+            end_dt = self.end_datetime.dateTime().toPyDateTime()
+            if start_dt > end_dt:
+                QMessageBox.warning(self, "Zakres dat", "Data początkowa jest późniejsza niż data końcowa.")
+                return
+            self._analysis_cache_start = start_dt
+            self._analysis_cache_end = end_dt
+            self._analysis_cache_machines = sorted({m for m in selected if m})
+
+            self._reset_results_state(clear_found_files=True)
+            self.progress.setRange(0, 0)
+            self.progress.setVisible(True)
+            self.status_label.setText("Analiza z bazy...")
+            self.analysis_run_btn.setEnabled(False)
+            self._set_task_active('analysis', True)
+
+            try:
+                self.analysis_started_at = datetime.now()
+                self._log(
+                    f"[Analysis] START {self.analysis_started_at.strftime('%Y-%m-%d %H:%M:%S')} | cache-only"
+                )
+            except Exception:
+                pass
+            try:
+                self.found_files = cache.fetch_files(
+                    machines=self._analysis_cache_machines,
+                    start_dt=self._analysis_cache_start,
+                    end_dt=self._analysis_cache_end,
+                )
+            except Exception:
+                self.found_files = []
+            try:
+                self._render_summary()
+                self._populate_trend_filters()
+                self._apply_trend_filters()
+                self.analysis_run_btn.setEnabled(bool(self.found_files))
+            except Exception:
+                pass
+            try:
+                self._start_intranet_fetch(show_progress=False)
+            except Exception:
+                pass
+            records = {}
+            try:
+                records = {"counts": cache.stats(), "skipped": 0}
+            except Exception:
+                records = {"counts": {}, "skipped": 0}
+            self._on_analysis_finished(records)
+
     def _on_progress(self, msg: str):
 
             try:
@@ -369,7 +866,7 @@ class MainWindowHandlers:
             except Exception:
                 pass
             try:
-                self.logs_tab.append(msg)
+                self._append_log(msg)
             except Exception:
                 pass
 
@@ -378,7 +875,7 @@ class MainWindowHandlers:
             self.status_label.setText("Błąd")
             self.scan_btn.setEnabled(True)
             QMessageBox.critical(self, "Błąd", err)
-            self.logs_tab.append(f"Błąd: {err}")
+            self._append_log(f"Błąd: {err}")
 
     def _on_finished(self, found: list):
             self.progress.setVisible(False)
@@ -701,11 +1198,13 @@ class MainWindowHandlers:
 
             if hasattr(self, 'tree') and self.tree is not None:
 
-                def color_for(val, vmin, vmax):
+                def color_for_metric(val, vmin, vmax, lower_is_better: bool):
                     if vmax == vmin:
-
                         return QColor('#e0f7e9')
                     t = (val - vmin) / float(vmax - vmin)
+                    if not lower_is_better:
+                        t = 1.0 - t
+                    t = max(0.0, min(1.0, t))
 
                     g = (0x2e, 0xcc, 0x71)
                     r = (0xe7, 0x4c, 0x3c)
@@ -715,6 +1214,81 @@ class MainWindowHandlers:
                     return QColor(rr, gg, bb)
 
                 self.tree.clear()
+                metric_kind = "changes"
+                try:
+                    combo = getattr(self, "tree_color_metric_combo", None)
+                    if combo is not None:
+                        metric_kind = str(combo.currentData() or "changes")
+                except Exception:
+                    metric_kind = "changes"
+                lower_is_better = metric_kind in ("changes", "nok_pct")
+
+                def _minmax(values: list[float | None]) -> tuple[float | None, float | None]:
+                    vals = [float(v) for v in values if v is not None]
+                    if not vals:
+                        return None, None
+                    return min(vals), max(vals)
+
+                def _pick_metric(changes: int, nok_pct: float | None, oee: float | None) -> float | None:
+                    if metric_kind == "nok_pct":
+                        return nok_pct
+                    if metric_kind == "oee":
+                        return oee
+                    return float(changes)
+
+                def _row_color(metric_value: float | None, vmin: float | None, vmax: float | None) -> QColor:
+                    if metric_value is None or vmin is None or vmax is None:
+                        return QColor("#ecf0f1")
+                    return color_for_metric(metric_value, vmin, vmax, lower_is_better)
+
+                try:
+                    selected_start = self.start_datetime.dateTime().toPyDateTime()
+                    selected_end = self.end_datetime.dateTime().toPyDateTime()
+                    if selected_end < selected_start:
+                        selected_start, selected_end = selected_end, selected_start
+                except Exception:
+                    selected_start = None
+                    selected_end = None
+                if (selected_start is None or selected_end is None) and self.found_files:
+                    dts = [f.dt for f in self.found_files]
+                    selected_start = min(dts)
+                    selected_end = max(dts)
+                cycle_time_sec = self._cycle_time_sec_for_current_line()
+
+                def _quality_metrics(
+                    ok_cnt: int,
+                    nok_cnt: int,
+                    bucket_start: datetime | None = None,
+                    bucket_end: datetime | None = None,
+                ) -> tuple[str, float | None, str, float | None]:
+                    total_q = ok_cnt + nok_cnt
+                    if total_q > 0:
+                        pct_nok_val = (nok_cnt / total_q) * 100.0
+                        pct_nok_txt = f"{pct_nok_val:.1f}%"
+                    else:
+                        pct_nok_val = None
+                        pct_nok_txt = "-"
+                    window_secs = 0.0
+                    if bucket_start is not None and bucket_end is not None:
+                        if selected_start is not None and selected_end is not None:
+                            lo = max(bucket_start, selected_start)
+                            hi = min(bucket_end, selected_end)
+                            window_secs = max(0.0, (hi - lo).total_seconds())
+                        else:
+                            window_secs = max(0.0, (bucket_end - bucket_start).total_seconds())
+                    elif selected_start is not None and selected_end is not None:
+                        window_secs = max(0.0, (selected_end - selected_start).total_seconds())
+
+                    if window_secs > 0 and total_q > 0:
+                        max_cycles = window_secs / cycle_time_sec
+                        performance = min(1.0, total_q / max_cycles) if max_cycles > 0 else 0.0
+                        quality = ok_cnt / total_q
+                        oee_val = performance * quality * 100.0
+                        oee_txt = f"{oee_val:.1f}%"
+                    else:
+                        oee_val = None
+                        oee_txt = "-"
+                    return pct_nok_txt, pct_nok_val, oee_txt, oee_val
 
                 def _machine_code(name: object) -> str:
                     text = str(name or '').strip()
@@ -749,15 +1323,17 @@ class MainWindowHandlers:
                 )
 
                 machine_totals = {}
+                machine_metric_vals: dict[str, float | None] = {}
                 for machine in machines_to_show:
                     machine_changes = grouped.get(machine, {})
                     total = sum(len(ch) for hours in machine_changes.values() for ch in hours.values())
                     machine_totals[machine] = total
-                if machine_totals:
-                    mmin = min(machine_totals.values())
-                    mmax = max(machine_totals.values())
-                else:
-                    mmin = mmax = 0
+                    machine_quality = quality_rollup.get(machine, {}) if quality_rollup else {}
+                    ok_machine = len(machine_quality.get('ok', ()))
+                    nok_machine = len(machine_quality.get('nok', ()))
+                    _, pct_nok_val, _, oee_val = _quality_metrics(ok_machine, nok_machine)
+                    machine_metric_vals[machine] = _pick_metric(total, pct_nok_val, oee_val)
+                mmin, mmax = _minmax(list(machine_metric_vals.values()))
 
 
                 try:
@@ -776,11 +1352,14 @@ class MainWindowHandlers:
                     machine_quality = quality_rollup.get(machine, {}) if quality_rollup else {}
                     ok_machine = len(machine_quality.get('ok', ()))
                     nok_machine = len(machine_quality.get('nok', ()))
+                    pct_nok_txt, pct_nok_val, oee_txt, oee_val = _quality_metrics(ok_machine, nok_machine)
                     m_item = QTreeWidgetItem([
                         f"{machine}",
                         str(total_machine),
                         str(ok_machine),
                         str(nok_machine),
+                        pct_nok_txt,
+                        oee_txt,
                         "",
                     ])
                     self.tree.addTopLevelItem(m_item)
@@ -788,12 +1367,16 @@ class MainWindowHandlers:
                     m_item.setTextAlignment(1, Qt.AlignCenter)
                     m_item.setTextAlignment(2, Qt.AlignCenter)
                     m_item.setTextAlignment(3, Qt.AlignCenter)
-                    m_col = color_for(total_machine, mmin, mmax)
+                    m_item.setTextAlignment(4, Qt.AlignCenter)
+                    m_item.setTextAlignment(5, Qt.AlignCenter)
+                    m_col = _row_color(_pick_metric(total_machine, pct_nok_val, oee_val), mmin, mmax)
 
                     m_item.setBackground(0, translucent(m_col, 70))
                     m_item.setBackground(1, m_col)
                     m_item.setBackground(2, translucent(m_col, 50))
                     m_item.setBackground(3, translucent(m_col, 50))
+                    m_item.setBackground(4, translucent(m_col, 45))
+                    m_item.setBackground(5, translucent(m_col, 45))
 
                     mc = color_map.get(machine, QColor('#3498db'))
                     ico = self._make_color_icon(mc)
@@ -812,11 +1395,18 @@ class MainWindowHandlers:
                         day: sum(len(ch) for ch in hours.values())
                         for day, hours in machine_changes.items()
                     }
-                    if day_totals:
-                        dmin = min(day_totals.values())
-                        dmax = max(day_totals.values())
-                    else:
-                        dmin = dmax = 0
+                    day_metric_vals: dict[object, float | None] = {}
+                    for day, _hours in machine_changes.items():
+                        day_quality = machine_quality.get('days', {}).get(day, {}) if machine_quality else {}
+                        ok_day = len(day_quality.get('ok', ())) if day_quality else 0
+                        nok_day = len(day_quality.get('nok', ())) if day_quality else 0
+                        day_start_dt = datetime.combine(day, datetime.min.time())
+                        day_end_dt = day_start_dt + timedelta(days=1)
+                        _, day_pct_val, _, day_oee_val = _quality_metrics(
+                            ok_day, nok_day, day_start_dt, day_end_dt
+                        )
+                        day_metric_vals[day] = _pick_metric(day_totals.get(day, 0), day_pct_val, day_oee_val)
+                    dmin, dmax = _minmax(list(day_metric_vals.values()))
                     for day, hours_dict in sorted(machine_changes.items()):
                         total_day = day_totals[day]
                         day_quality = {}
@@ -824,30 +1414,48 @@ class MainWindowHandlers:
                             day_quality = machine_quality.get('days', {}).get(day, {})
                         ok_day = len(day_quality.get('ok', ())) if day_quality else 0
                         nok_day = len(day_quality.get('nok', ())) if day_quality else 0
+                        day_start_dt = datetime.combine(day, datetime.min.time())
+                        day_end_dt = day_start_dt + timedelta(days=1)
+                        day_pct_txt, day_pct_val, day_oee_txt, day_oee_val = _quality_metrics(
+                            ok_day, nok_day, day_start_dt, day_end_dt
+                        )
                         d_item = QTreeWidgetItem([
                             f"{day.strftime('%Y-%m-%d')}",
                             str(total_day),
                             str(ok_day),
                             str(nok_day),
+                            day_pct_txt,
+                            day_oee_txt,
                             "",
                         ])
                         m_item.addChild(d_item)
                         d_item.setTextAlignment(1, Qt.AlignCenter)
                         d_item.setTextAlignment(2, Qt.AlignCenter)
                         d_item.setTextAlignment(3, Qt.AlignCenter)
-                        d_col = color_for(total_day, dmin, dmax)
+                        d_item.setTextAlignment(4, Qt.AlignCenter)
+                        d_item.setTextAlignment(5, Qt.AlignCenter)
+                        d_col = _row_color(_pick_metric(total_day, day_pct_val, day_oee_val), dmin, dmax)
                         d_item.setBackground(0, translucent(d_col, 60))
                         d_item.setBackground(1, d_col)
                         d_item.setBackground(2, translucent(d_col, 45))
                         d_item.setBackground(3, translucent(d_col, 45))
+                        d_item.setBackground(4, translucent(d_col, 40))
+                        d_item.setBackground(5, translucent(d_col, 40))
 
 
                         hour_totals = {hour: len(changes) for hour, changes in hours_dict.items()}
-                        if hour_totals:
-                            hmin = min(hour_totals.values())
-                            hmax = max(hour_totals.values())
-                        else:
-                            hmin = hmax = 0
+                        hour_metric_vals: dict[object, float | None] = {}
+                        for hour, changes in hours_dict.items():
+                            hour_quality = day_quality.get('hours', {}).get(hour, {}) if day_quality else {}
+                            ok_hour = len(hour_quality.get('ok', ())) if hour_quality else 0
+                            nok_hour = len(hour_quality.get('nok', ())) if hour_quality else 0
+                            hour_start_dt = hour
+                            hour_end_dt = hour + timedelta(hours=1)
+                            _, hour_pct_val, _, hour_oee_val = _quality_metrics(
+                                ok_hour, nok_hour, hour_start_dt, hour_end_dt
+                            )
+                            hour_metric_vals[hour] = _pick_metric(len(changes), hour_pct_val, hour_oee_val)
+                        hmin, hmax = _minmax(list(hour_metric_vals.values()))
                         for hour, changes in sorted(hours_dict.items()):
                             hour_str = hour.strftime('%H:00')
                             minutes = sorted({dt.strftime('%H:%M') for dt in changes})
@@ -857,22 +1465,33 @@ class MainWindowHandlers:
                                 hour_quality = day_quality.get('hours', {}).get(hour, {})
                             ok_hour = len(hour_quality.get('ok', ())) if hour_quality else 0
                             nok_hour = len(hour_quality.get('nok', ())) if hour_quality else 0
+                            hour_start_dt = hour
+                            hour_end_dt = hour + timedelta(hours=1)
+                            hour_pct_txt, hour_pct_val, hour_oee_txt, hour_oee_val = _quality_metrics(
+                                ok_hour, nok_hour, hour_start_dt, hour_end_dt
+                            )
                             h_item = QTreeWidgetItem([
                                 f"{hour_str}",
                                 str(cnt),
                                 str(ok_hour),
                                 str(nok_hour),
+                                hour_pct_txt,
+                                hour_oee_txt,
                                 ", ".join(minutes),
                             ])
                             d_item.addChild(h_item)
                             h_item.setTextAlignment(1, Qt.AlignCenter)
                             h_item.setTextAlignment(2, Qt.AlignCenter)
                             h_item.setTextAlignment(3, Qt.AlignCenter)
-                            h_col = color_for(cnt, hmin, hmax)
+                            h_item.setTextAlignment(4, Qt.AlignCenter)
+                            h_item.setTextAlignment(5, Qt.AlignCenter)
+                            h_col = _row_color(_pick_metric(cnt, hour_pct_val, hour_oee_val), hmin, hmax)
                             h_item.setBackground(0, translucent(h_col, 50))
                             h_item.setBackground(1, h_col)
                             h_item.setBackground(2, translucent(h_col, 40))
                             h_item.setBackground(3, translucent(h_col, 40))
+                            h_item.setBackground(4, translucent(h_col, 35))
+                            h_item.setBackground(5, translucent(h_col, 35))
 
                 try:
                     self.tree.collapseAll()
@@ -1064,6 +1683,71 @@ class MainWindowHandlers:
 
             return rollup
 
+    def _build_intranet_series(self, rows: list[dict], start_dt: datetime, end_dt: datetime) -> dict[str, int]:
+            fine_grain = (end_dt - start_dt).total_seconds() <= 48 * 3600
+            series: dict[str, int] = {}
+            for rec in rows:
+                dt = rec.get('data')
+                if not isinstance(dt, datetime):
+                    continue
+                if dt < start_dt or dt > end_dt:
+                    continue
+                judge = str(rec.get('judge', '') or '').strip().upper()
+                if judge != 'NOK':
+                    continue
+                bucket = dt.strftime("%Y-%m-%d %H:00") if fine_grain else dt.date().isoformat()
+                series[bucket] = series.get(bucket, 0) + 1
+            return series
+
+    def _load_intranet_from_cache(
+        self,
+        start_dt: datetime,
+        end_dt: datetime,
+        line_id: int,
+        show_progress: bool = True,
+    ) -> bool:
+            cache = getattr(self, "runtime_cache", None)
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache):
+                cache = self._create_runtime_cache()
+                self.runtime_cache = cache
+            if cache is None or not isinstance(cache, RuntimeSQLiteCache) or not cache.persistent:
+                return False
+            try:
+                rows_all = cache.fetch_intranet_rows(
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    line_id=line_id,
+                )
+            except Exception:
+                rows_all = []
+            if not rows_all and line_id:
+                try:
+                    rows_all = cache.fetch_intranet_rows(
+                        start_dt=start_dt,
+                        end_dt=end_dt,
+                        line_id=None,
+                    )
+                except Exception:
+                    rows_all = []
+            if not rows_all:
+                return False
+            rows_nok = [r for r in rows_all if str(r.get('judge', '') or '').strip().upper() == 'NOK']
+            series = self._build_intranet_series(rows_all, start_dt, end_dt)
+            if show_progress:
+                try:
+                    self.progress.setRange(0, 0)
+                    self.progress.setVisible(True)
+                    self.status_label.setText("Intranet: dane z bazy...")
+                except Exception:
+                    pass
+            data = {
+                "series": series,
+                "rows": rows_nok,
+                "rows_all": rows_all,
+            }
+            self._on_intranet_ready(data)
+            return True
+
     def _start_intranet_fetch(self, show_progress: bool = True):
 
             try:
@@ -1099,6 +1783,7 @@ class MainWindowHandlers:
                 self.intranet_filtered_rows = []
                 self.intranet_all_rows = []
                 self.intranet_nok_rows = []
+                self.intranet_nok_rows_all = []
                 if hasattr(self, 'intra_table') and self.intra_table is not None:
                     self.intra_table.setRowCount(0)
                 if hasattr(self, 'bar_native') and self.bar_native is not None:
@@ -1121,6 +1806,32 @@ class MainWindowHandlers:
                     days_back = 0
                 fetch_start = start_dt - timedelta(days=days_back)
                 self._log(f"[Intranet] Fetch start: {fetch_start} -> {end_dt} (requested {start_dt}->{end_dt}, days_back={days_back}), line={line_id}")
+                try:
+                    per_day_timeout = int(self.settings.value("intranet_timeout_per_day_sec", 8, type=int))
+                except Exception:
+                    per_day_timeout = 8
+                if per_day_timeout < 1:
+                    per_day_timeout = 1
+                try:
+                    days_count = (end_dt.date() - fetch_start.date()).days + 1
+                except Exception:
+                    days_count = 1
+                if days_count < 1:
+                    days_count = 1
+                total_timeout = per_day_timeout * days_count
+                self._log(
+                    f"[Intranet] Timeout: {per_day_timeout}s/dzien x {days_count} dni = {total_timeout}s"
+                )
+                if self._is_offline_cache_mode():
+                    self._log("[Intranet] Offline cache mode: using cached data")
+                    if self._load_intranet_from_cache(fetch_start, end_dt, int(line_id), show_progress):
+                        return
+                    self._log("[Intranet] Cache brak danych w zakresie")
+                    try:
+                        self._set_task_active('intranet', False)
+                    except Exception:
+                        pass
+                    return
 
                 if show_progress:
                     try:
@@ -1133,7 +1844,14 @@ class MainWindowHandlers:
                 if not excl_str:
                     excl_str = DEFAULT_INTRANET_EXCLUDES
                 excludes = [s.strip() for s in excl_str.split(',') if s.strip()]
-                self.intra_worker = IntranetWorker(url, fetch_start, end_dt, int(line_id), excludes=excludes)
+                self.intra_worker = IntranetWorker(
+                    url,
+                    fetch_start,
+                    end_dt,
+                    int(line_id),
+                    timeout_sec=total_timeout,
+                    excludes=excludes,
+                )
                 self.intra_worker.progress.connect(self._on_progress)
                 self.intra_worker.finished.connect(self._on_intranet_ready)
                 self.intra_worker.error.connect(self._on_intranet_error)
@@ -1155,6 +1873,10 @@ class MainWindowHandlers:
 
     def _on_intranet_ready(self, data: dict):
             try:
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
                 series = data.get('series', {}) if isinstance(data, dict) else {}
                 rows = data.get('rows', []) if isinstance(data, dict) else []
 
@@ -1192,6 +1914,19 @@ class MainWindowHandlers:
                     self._log(f"[Intranet] rows_all={len(all_rows)} NOK={len(rows)}")
                 except Exception:
                     pass
+                try:
+                    cache = getattr(self, "runtime_cache", None)
+                    if isinstance(cache, RuntimeSQLiteCache) and cache.persistent and all_rows:
+                        try:
+                            line_id = int(self.settings.value("intranet_line_id", 436, type=int))
+                        except Exception:
+                            line_id = 0
+                        inserted = cache.insert_intranet_rows(all_rows, line_id=line_id)
+                        self._log(
+                            f"[Intranet] Cache zapis: +{inserted}/{len(all_rows)}"
+                        )
+                except Exception:
+                    pass
                 def _find_source(sn_rows: list):
                     feed_rows = [rr for rr in sn_rows if 'podajnik drutu' in str(rr.get('maszyna_opis','')).lower()]
                     if feed_rows:
@@ -1207,7 +1942,10 @@ class MainWindowHandlers:
                     return '', ''
 
                 by_sn = {}
+                row_idx = 0
                 for r in all_rows:
+                    row_idx += 1
+                    self._yield_ui(row_idx)
                     by_sn.setdefault(r.get('serial_no',''), []).append(r)
 
                 source_cache: dict[str, tuple[str, str]] = {}
@@ -1311,7 +2049,10 @@ class MainWindowHandlers:
                 enriched_all: list[dict] = []
                 actual_hits = 0
                 source_hits = 0
+                row_idx = 0
                 for r in all_rows:
+                    row_idx += 1
+                    self._yield_ui(row_idx)
                     rr = dict(r)
                     src_opis, raw_src_code = source_cache.get(r.get('serial_no', ''), ('', ''))
                     canonical_src = _canonical_machine(raw_src_code)
@@ -1373,7 +2114,10 @@ class MainWindowHandlers:
                 self.intranet_all_rows = enriched_all
 
                 enriched: list[dict] = []
+                row_idx = 0
                 for r in rows:
+                    row_idx += 1
+                    self._yield_ui(row_idx)
                     rr = dict(r)
                     src_opis, raw_src_code = source_cache.get(r.get('serial_no', ''), ('', ''))
                     canonical_src = _canonical_machine(raw_src_code)
@@ -1410,15 +2154,9 @@ class MainWindowHandlers:
                 except Exception:
                     pass
                 # Deduplicate by serial_no, keep oldest (by 'data')
-                enriched.sort(key=lambda r: r.get('data'))
-                seen = set()
-                dedup = []
-                for rr in enriched:
-                    sn = rr.get('serial_no','')
-                    if sn in seen:
-                        continue
-                    seen.add(sn)
-                    dedup.append(rr)
+                filtered_rows = self._filter_intranet_rows_for_analysis(enriched)
+                dedup = self._dedup_intranet_rows(filtered_rows)
+                self.intranet_nok_rows_all = list(enriched)
                 try:
                     mapped_cnt = sum(1 for rr in dedup if rr.get('source_mapped'))
                     feeder_cnt = sum(1 for r0 in (all_rows or []) if 'podajnik drutu' in str(r0.get('maszyna_opis','')).lower())
@@ -1614,7 +2352,27 @@ class MainWindowHandlers:
             self.intranet_filtered_rows = filtered
 
     def _on_intranet_error(self, err: str):
-            self._log(f"[Intranet] Błąd pobierania: {err}. Pomijam overlay.")
+            self._log(f"[Intranet] Błąd pobierania: {err}. Próba z cache.")
+            try:
+                start_dt = self.start_datetime.dateTime().toPyDateTime()
+                end_dt = self.end_datetime.dateTime().toPyDateTime()
+                line_id = self.settings.value("intranet_line_id", 436, type=int)
+                try:
+                    days_back = int(self.settings.value("intranet_days_back", 1, type=int))
+                except Exception:
+                    days_back = 1
+                if days_back < 0:
+                    days_back = 0
+                fetch_start = start_dt - timedelta(days=days_back)
+            except Exception:
+                start_dt = None
+                end_dt = None
+                line_id = 0
+                fetch_start = None
+            if fetch_start and end_dt:
+                if self._load_intranet_from_cache(fetch_start, end_dt, int(line_id), show_progress=False):
+                    return
+            self._log("[Intranet] Cache brak danych, pomijam overlay.")
             analysis_running = self._is_worker_running('a_worker')
             worker_running = self._is_worker_running('worker')
             self._set_task_active('intranet', False)
@@ -1814,6 +2572,7 @@ class MainWindowHandlers:
                 self._param_card_index_lookup = {}
                 self._param_card_grip_lookup = {}
                 self._param_card_nest_lookup = {}
+                self._param_card_nest_lookup_by_pin = {}
                 self._param_card_hairpin_lookup = {}
             except Exception:
                 pass
@@ -1931,6 +2690,7 @@ class MainWindowHandlers:
                 self.intranet_filtered_rows = []
                 self.intranet_all_rows = []
                 self.intranet_nok_rows = []
+                self.intranet_nok_rows_all = []
                 self._populate_pareto_filters()
             except Exception:
                 pass
@@ -2095,6 +2855,17 @@ class MainWindowHandlers:
             if not analysis_files:
                 QMessageBox.information(self, "Brak danych", "Brak plików do analizy.")
                 return
+            try:
+                dts = [f.dt for f in analysis_files if getattr(f, "dt", None) is not None]
+                self._analysis_cache_start = min(dts) if dts else None
+                self._analysis_cache_end = max(dts) if dts else None
+                self._analysis_cache_machines = sorted(
+                    {f.machine for f in analysis_files if getattr(f, "machine", "")}
+                )
+            except Exception:
+                self._analysis_cache_start = None
+                self._analysis_cache_end = None
+                self._analysis_cache_machines = None
             self._reset_results_state(clear_found_files=False)
             self.progress.setRange(0, 0)
             self.progress.setVisible(True)
@@ -2112,8 +2883,9 @@ class MainWindowHandlers:
                 cache = getattr(self, "runtime_cache", None)
                 if cache is not None:
                     cache.close()
-                self.runtime_cache = RuntimeSQLiteCache()
-                self.runtime_cache_path = self.runtime_cache.path
+                self.runtime_cache = self._create_runtime_cache()
+                if self.runtime_cache is None:
+                    raise RuntimeError("Brak dostępu do pliku bazy danych.")
             except Exception as exc:
                 self.runtime_cache = None
                 self.runtime_cache_path = ""
@@ -2266,6 +3038,23 @@ class MainWindowHandlers:
                 except Exception:
                     pass
 
+            cache_busy = isinstance(cache, RuntimeSQLiteCache)
+            prev_status = None
+            if cache_busy:
+                try:
+                    prev_status = self.status_label.text()
+                    self.status_label.setText("Wczytywanie z bazy...")
+                except Exception:
+                    pass
+                try:
+                    self._set_task_active('cache', True)
+                except Exception:
+                    pass
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+
             self._log(
                 "[Analysis] Przetworzono rekordy: "
                 f"params={counts.get('params', 0)}, "
@@ -2279,12 +3068,18 @@ class MainWindowHandlers:
             self.param_snapshots = []
             self.param_card_selection = None
             self.current_param_card_rows = []
+            start_dt, end_dt, machines_filter = self._analysis_cache_filters()
             try:
                 self._populate_param_card_filters()
             except Exception:
                 pass
             try:
-                grip_snaps = self._fetch_struct_snapshots("grip")
+                grip_snaps = self._fetch_struct_snapshots(
+                    "grip",
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
                 grip_snaps.sort(key=lambda r: r.dt)
                 self.hp_grip_snapshots = []
                 self.hp_grip_events = self._build_struct_change_events(grip_snaps)
@@ -2292,9 +3087,14 @@ class MainWindowHandlers:
                 self._refresh_hp_grip_columns()
                 self._populate_hp_grip_filters()
             except Exception:
-                pass
+                self._log("[Analysis] HP/Grip error:\n" + traceback.format_exc())
             try:
-                nest_snaps = self._fetch_struct_snapshots("nest")
+                nest_snaps = self._fetch_struct_snapshots(
+                    "nest",
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
                 nest_snaps.sort(key=lambda r: r.dt)
                 self.nest_snapshots = []
                 self.nest_events = self._build_struct_change_events(nest_snaps)
@@ -2302,9 +3102,14 @@ class MainWindowHandlers:
                 self._refresh_nest_columns()
                 self._populate_nest_filters()
             except Exception:
-                pass
+                self._log("[Analysis] Nest error:\n" + traceback.format_exc())
             try:
-                hairpin_snaps = self._fetch_struct_snapshots("hairpin")
+                hairpin_snaps = self._fetch_struct_snapshots(
+                    "hairpin",
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
                 hairpin_snaps.sort(key=lambda r: r.dt)
                 self.hairpin_snapshots = []
                 self.hairpin_events = self._build_struct_change_events(hairpin_snaps)
@@ -2312,7 +3117,7 @@ class MainWindowHandlers:
                 self._refresh_stripping_columns()
                 self._populate_stripping_filters()
             except Exception:
-                pass
+                self._log("[Analysis] Hairpin error:\n" + traceback.format_exc())
             events = []
             prog_events = []
             seen_prog = set()
@@ -2325,10 +3130,18 @@ class MainWindowHandlers:
                 threshold_pct = 10.0
             param_iter = None
             if isinstance(cache, RuntimeSQLiteCache):
-                param_iter = cache.iter_param_snapshots(order_by_ts=True)
+                param_iter = cache.iter_param_snapshots(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                    order_by_ts=True,
+                )
             else:
                 param_iter = []
+            param_idx = 0
             for s in param_iter:
+                param_idx += 1
+                self._yield_ui(param_idx)
                 key = (s.machine, s.table, s.pin, s.step)
                 if key not in baseline_done:
 
@@ -2449,6 +3262,16 @@ class MainWindowHandlers:
             )
             self.analysis_events = events
             self.program_events = prog_events
+            try:
+                machines_with_files = {f.machine for f in getattr(self, 'found_files', []) if getattr(f, 'machine', '')}
+                machines_with_param_changes = {e.get('machine', '') for e in events if e.get('machine')}
+                missing = sorted(machines_with_files.difference(machines_with_param_changes))
+                if missing:
+                    self._log(
+                        f"[Analysis] Brak zmian parametrów dla maszyn: {', '.join(missing)}"
+                    )
+            except Exception:
+                pass
             self._populate_analysis_filters()
             self._analysis_auto_resize = True
             self._apply_analysis_filters()
@@ -2457,7 +3280,11 @@ class MainWindowHandlers:
 
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                index_iter = cache.iter_index_snapshots()
+                index_iter = cache.iter_index_snapshots(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 index_snaps: list[IndexSnapshot] = self._fetch_index_snapshots()
                 index_snaps.sort(key=lambda r: r.dt)
@@ -2492,11 +3319,16 @@ class MainWindowHandlers:
                 self._apply_trend_filters()
             except Exception:
                 pass
-            try:
-                self._populate_trend_filters()
-                self._apply_trend_filters()
-            except Exception:
-                pass
+            if cache_busy:
+                try:
+                    self._set_task_active('cache', False)
+                except Exception:
+                    pass
+                try:
+                    if prev_status and self.status_label.text() == "Wczytywanie z bazy...":
+                        self.status_label.setText(prev_status)
+                except Exception:
+                    pass
 
     def _populate_analysis_filters(self):
 
@@ -2516,6 +3348,13 @@ class MainWindowHandlers:
                 step_entry = pin_entry.setdefault(step, set())
                 if params:
                     step_entry.update(params)
+            try:
+                machines_all = {f.machine for f in getattr(self, 'found_files', []) if getattr(f, 'machine', '')}
+            except Exception:
+                machines_all = set()
+            for machine in machines_all:
+                if machine and machine not in hierarchy:
+                    hierarchy[machine] = {}
             self._analysis_filter_hierarchy = hierarchy
 
             machines = [key for key in hierarchy.keys() if key]
@@ -2685,7 +3524,12 @@ class MainWindowHandlers:
                 return
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                hierarchy = cache.fetch_param_line_hierarchy()
+                start_dt, end_dt, machines_filter = self._analysis_cache_filters()
+                hierarchy = cache.fetch_param_line_hierarchy(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 snaps = getattr(self, 'param_snapshots', [])
                 hierarchy: dict[str, dict[str, set[str]]] = {}
@@ -2831,18 +3675,20 @@ class MainWindowHandlers:
                         text = str(key or '').strip()
                         if text:
                             keys.add(text)
-            else:
-                cache = getattr(self, "runtime_cache", None)
-                if isinstance(cache, RuntimeSQLiteCache):
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                try:
                     keys.update(cache.fetch_struct_value_keys("nest"))
-                else:
-                    for snap in getattr(self, 'nest_snapshots', []):
-                        if not isinstance(snap, NestSnapshot):
-                            continue
-                        for key in getattr(snap, 'values', {}).keys():
-                            text = str(key or '').strip()
-                            if text:
-                                keys.add(text)
+                except Exception:
+                    pass
+            else:
+                for snap in getattr(self, 'nest_snapshots', []):
+                    if not isinstance(snap, NestSnapshot):
+                        continue
+                    for key in getattr(snap, 'values', {}).keys():
+                        text = str(key or '').strip()
+                        if text:
+                            keys.add(text)
             ordered: list[str] = []
             for key in NEST_PARAM_ORDER:
                 if key in keys:
@@ -2861,18 +3707,20 @@ class MainWindowHandlers:
                         text = str(key or '').strip()
                         if text:
                             keys.add(text)
-            else:
-                cache = getattr(self, "runtime_cache", None)
-                if isinstance(cache, RuntimeSQLiteCache):
+            cache = getattr(self, "runtime_cache", None)
+            if isinstance(cache, RuntimeSQLiteCache):
+                try:
                     keys.update(cache.fetch_struct_value_keys("hairpin"))
-                else:
-                    for snap in getattr(self, 'hairpin_snapshots', []):
-                        if not isinstance(snap, HairpinSnapshot):
-                            continue
-                        for key in getattr(snap, 'values', {}).keys():
-                            text = str(key or '').strip()
-                            if text:
-                                keys.add(text)
+                except Exception:
+                    pass
+            else:
+                for snap in getattr(self, 'hairpin_snapshots', []):
+                    if not isinstance(snap, HairpinSnapshot):
+                        continue
+                    for key in getattr(snap, 'values', {}).keys():
+                        text = str(key or '').strip()
+                        if text:
+                            keys.add(text)
             normalized: dict[str, str] = {}
             for source in keys:
                 if source in HAIRPIN_PARAM_EXCLUDE:
@@ -3216,7 +4064,9 @@ class MainWindowHandlers:
     def _populate_pareto_filters(self) -> None:
             if not hasattr(self, 'pareto_machine_combo'):
                 return
-            rows = getattr(self, 'intranet_nok_rows', [])
+            rows = getattr(self, 'intranet_nok_rows_all', getattr(self, 'intranet_nok_rows', []))
+            rows = self._filter_intranet_rows_for_analysis(rows)
+            rows = self._dedup_intranet_rows(rows)
             machines = {self._pareto_target_label(r) for r in rows}
             machines = {m for m in machines if m}
             self._set_combo_items(self.pareto_machine_combo, machines)
@@ -3226,7 +4076,9 @@ class MainWindowHandlers:
             chart = getattr(self, 'pareto_chart', None)
             if chart is None:
                 return
-            rows = getattr(self, 'intranet_nok_rows', [])
+            rows = getattr(self, 'intranet_nok_rows_all', getattr(self, 'intranet_nok_rows', []))
+            rows = self._filter_intranet_rows_for_analysis(rows)
+            rows = self._dedup_intranet_rows(rows)
             if not rows:
                 chart.set_data({})
                 if hasattr(self, 'pareto_summary_label'):
@@ -3267,7 +4119,12 @@ class MainWindowHandlers:
                 return
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                groups: dict[str, list[datetime]] = cache.fetch_param_card_groups()
+                start_dt, end_dt, machines_filter = self._analysis_cache_filters()
+                groups: dict[str, list[datetime]] = cache.fetch_param_card_groups(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 snaps = getattr(self, 'param_snapshots', [])
                 groups = {}
@@ -3307,6 +4164,15 @@ class MainWindowHandlers:
             dt_combo.blockSignals(False)
             if machine_combo.count():
                 machine_combo.setCurrentIndex(0)
+                try:
+                    machine_key = machine_combo.currentData(Qt.UserRole)
+                    if machine_key is None:
+                        text = machine_combo.currentText()
+                        machine_key = '' if text == '-' else text
+                    machine_key = machine_key if isinstance(machine_key, str) else str(machine_key or '')
+                    self._update_param_card_datetime_options(machine_key)
+                except Exception:
+                    pass
             else:
                 self._set_param_card_group(None, None)
 
@@ -3392,20 +4258,20 @@ class MainWindowHandlers:
                     if isinstance(cache, RuntimeSQLiteCache):
                         snaps = cache.fetch_param_snapshots(machine=machine_key, dt=dt)
                     else:
-                        machine_map = groups.get(machine_key, {})
-                        snaps = list(machine_map.get(dt, []))
+                        snaps = []
                 except Exception:
                     snaps = []
             self._param_card_index_lookup = {}
             self._param_card_grip_lookup = {}
             self._param_card_nest_lookup = {}
+            self._param_card_nest_lookup_by_pin = {}
             self._param_card_hairpin_lookup = {}
             self.current_param_card_rows = snaps
             self.param_card_selection = (dt, machine) if snaps else None
             export_btn = getattr(self, 'param_card_export_btn', None)
             if export_btn is not None:
                 export_btn.setEnabled(bool(snaps))
-            if snaps and dt is not None and machine is not None:
+            if dt is not None and machine is not None:
                 machine_norm = (machine or '').strip()
                 try:
                     index_lookup: dict[tuple[str, str, int], IndexSnapshot] = {}
@@ -3437,17 +4303,22 @@ class MainWindowHandlers:
                     self._param_card_grip_lookup = {}
                 try:
                     nest_lookup: dict[tuple[str, str], NestSnapshot] = {}
+                    nest_lookup_by_pin: dict[str, NestSnapshot] = {}
                     for nest_snap in self._fetch_struct_snapshots("nest", machine=machine_norm, dt=dt):
                         if not isinstance(nest_snap, NestSnapshot):
                             continue
-                        key = (
-                            (nest_snap.program or '').strip(),
-                            (nest_snap.pin or '').strip(),
-                        )
+                        program_key = (nest_snap.program or '').strip()
+                        pin_key = (nest_snap.pin or '').strip()
+                        pin_norm = pin_key.lower()
+                        key = (program_key, pin_key)
                         nest_lookup[key] = nest_snap
+                        if pin_norm and pin_norm not in nest_lookup_by_pin:
+                            nest_lookup_by_pin[pin_norm] = nest_snap
                     self._param_card_nest_lookup = nest_lookup
+                    self._param_card_nest_lookup_by_pin = nest_lookup_by_pin
                 except Exception:
                     self._param_card_nest_lookup = {}
+                    self._param_card_nest_lookup_by_pin = {}
                 try:
                     hairpin_lookup: dict[tuple[str, str], HairpinSnapshot] = {}
                     for hair_snap in self._fetch_struct_snapshots("hairpin", machine=machine_norm, dt=dt):
@@ -3461,7 +4332,96 @@ class MainWindowHandlers:
                     self._param_card_hairpin_lookup = hairpin_lookup
                 except Exception:
                     self._param_card_hairpin_lookup = {}
+            if not snaps and dt is not None and machine is not None:
+                synthetic_rows: list[ParamSnapshot] = []
+                seen_rows: set[tuple[str, str, str, int | None]] = set()
+                for (program, table_name, step_value), idx_snap in (self._param_card_index_lookup or {}).items():
+                    key = (program, table_name, "", step_value)
+                    if key in seen_rows:
+                        continue
+                    seen_rows.add(key)
+                    synthetic_rows.append(
+                        ParamSnapshot(
+                            dt=dt,
+                            machine=machine,
+                            program=program,
+                            table=table_name,
+                            pin="",
+                            step=step_value if step_value != -1 else None,
+                            values={},
+                            included={},
+                            modes={},
+                            path=getattr(idx_snap, "path", ""),
+                        )
+                    )
+                struct_sources = (
+                    self._param_card_grip_lookup or {},
+                    self._param_card_nest_lookup or {},
+                    self._param_card_hairpin_lookup or {},
+                )
+                for source in struct_sources:
+                    for (program, pin), struct_snap in source.items():
+                        existing_key = None
+                        for candidate in seen_rows:
+                            if candidate[0] == program and candidate[2] == pin:
+                                existing_key = candidate
+                                break
+                        if existing_key is not None:
+                            continue
+                        key = (program, "", pin, None)
+                        if key in seen_rows:
+                            continue
+                        seen_rows.add(key)
+                        synthetic_rows.append(
+                            ParamSnapshot(
+                                dt=dt,
+                                machine=machine,
+                                program=program,
+                                table="",
+                                pin=pin,
+                                step=None,
+                                values={},
+                                included={},
+                                modes={},
+                                path=getattr(struct_snap, "path", ""),
+                            )
+                        )
+                snaps = synthetic_rows
+                self.current_param_card_rows = snaps
+                self.param_card_selection = (dt, machine) if snaps else None
+                if export_btn is not None:
+                    export_btn.setEnabled(bool(snaps))
             self._update_param_card_table(snaps)
+
+    def _param_card_header_labels(self, value_names: list[str]) -> list[str]:
+            index_labels = [
+                "Index",
+                "Compactor vertical",
+                "Expansion vertical",
+                "Insertion transversal",
+                "Insertion horizontal",
+                "Funnel transversal",
+                "Funnel horizontal",
+                "Inner containment",
+                "Outer containment",
+                "Override",
+            ]
+            index_map = dict(zip(INDEX_PARAM_DISPLAY_ORDER, index_labels))
+            hairpin_labels = [
+                "Initial leg length",
+                "Final leg length",
+                "Stripping end offset",
+                "Stripping end length",
+                "Stripping start offset",
+                "Stripping start length",
+                "Hairpin length",
+            ]
+            hairpin_map = dict(zip(HAIRPIN_PARAM_ORDER, hairpin_labels))
+            labels: list[str] = []
+            for name in value_names:
+                label = index_map.get(name) or hairpin_map.get(name) or name
+                labels.append(label)
+            return labels
 
     def _update_param_card_table(self, snaps: list[ParamSnapshot] | None) -> None:
             table = getattr(self, 'param_card_table', None)
@@ -3547,6 +4507,28 @@ class MainWindowHandlers:
             text = self._format_struct_value(value)
             return "" if text == "(brak)" else text
 
+    def _param_card_find_struct_snapshot(
+        self,
+        lookup: dict[tuple[str, str], GripSnapshot | NestSnapshot | HairpinSnapshot],
+        *,
+        program_key: str,
+        pin_key: str,
+    ) -> GripSnapshot | NestSnapshot | HairpinSnapshot | None:
+            direct = lookup.get((program_key, pin_key))
+            if direct is not None:
+                return direct
+            pin_norm = (pin_key or "").strip().lower()
+            if pin_norm:
+                pin_matches = [snap for (program, pin), snap in lookup.items() if pin.strip().lower() == pin_norm]
+                if len(pin_matches) == 1:
+                    return pin_matches[0]
+            program_matches = [snap for (program, _), snap in lookup.items() if program == program_key]
+            if len(program_matches) == 1:
+                return program_matches[0]
+            if len(lookup) == 1:
+                return next(iter(lookup.values()))
+            return None
+
     def _param_card_cell_text(self, snap: ParamSnapshot, name: str) -> str:
             if name in PARAM_DISPLAY_ORDER:
                 if name == STEP_SPEED_LABEL:
@@ -3610,21 +4592,33 @@ class MainWindowHandlers:
 
             if name in GRIP_PARAM_ORDER:
                 lookup = getattr(self, '_param_card_grip_lookup', {}) or {}
-                struct_snap = lookup.get((program_key, pin_key))
+                struct_snap = self._param_card_find_struct_snapshot(
+                    lookup,
+                    program_key=program_key,
+                    pin_key=pin_key,
+                )
                 if not struct_snap:
                     return ""
                 return self._param_card_struct_text(struct_snap.values.get(name, ''))
 
             if name in NEST_PARAM_ORDER:
                 lookup = getattr(self, '_param_card_nest_lookup', {}) or {}
-                struct_snap = lookup.get((program_key, pin_key))
+                struct_snap = self._param_card_find_struct_snapshot(
+                    lookup,
+                    program_key=program_key,
+                    pin_key=pin_key,
+                )
                 if not struct_snap:
                     return ""
                 return self._param_card_struct_text(struct_snap.values.get(name, ''))
 
             if name in HAIRPIN_PARAM_ORDER:
                 lookup = getattr(self, '_param_card_hairpin_lookup', {}) or {}
-                struct_snap = lookup.get((program_key, pin_key))
+                struct_snap = self._param_card_find_struct_snapshot(
+                    lookup,
+                    program_key=program_key,
+                    pin_key=pin_key,
+                )
                 if not struct_snap:
                     return ""
                 value = struct_snap.values.get(name)
@@ -3643,7 +4637,12 @@ class MainWindowHandlers:
                 return
             cache = getattr(self, "runtime_cache", None)
             if isinstance(cache, RuntimeSQLiteCache):
-                hierarchy = cache.fetch_index_line_hierarchy()
+                start_dt, end_dt, machines_filter = self._analysis_cache_filters()
+                hierarchy = cache.fetch_index_line_hierarchy(
+                    machines=machines_filter,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
             else:
                 snaps = getattr(self, 'index_snapshots', [])
                 hierarchy: dict[str, dict[str, set[str]]] = {}
@@ -3966,12 +4965,17 @@ class MainWindowHandlers:
                 formatted = formatted.rstrip("0").rstrip(".")
             return formatted or "0"
 
-    def _build_struct_change_events(self, snaps: list[GripSnapshot | HairpinSnapshot]) -> list[dict]:
+    def _build_struct_change_events(
+        self, snaps: list[GripSnapshot | HairpinSnapshot | NestSnapshot]
+    ) -> list[dict]:
             events: list[dict] = []
-            last_state: dict[tuple[str, str], GripSnapshot | HairpinSnapshot] = {}
+            last_state: dict[tuple[str, str], GripSnapshot | HairpinSnapshot | NestSnapshot] = {}
             baseline_done: set[tuple[str, str]] = set()
+            idx = 0
             for snap in snaps:
-                if not isinstance(snap, (GripSnapshot, HairpinSnapshot)):
+                idx += 1
+                self._yield_ui(idx)
+                if not isinstance(snap, (GripSnapshot, HairpinSnapshot, NestSnapshot)):
                     continue
                 key = (snap.machine, snap.pin)
                 if key not in baseline_done:
@@ -4022,7 +5026,10 @@ class MainWindowHandlers:
             last_state: dict[tuple[str, str, int], IndexSnapshot] = {}
             last_prog: dict[tuple[str, str, int], str] = {}
             baseline_done: set[tuple[str, str, int]] = set()
+            idx = 0
             for s in snaps:
+                idx += 1
+                self._yield_ui(idx)
                 key = (s.machine, s.table, s.step)
                 if key not in baseline_done:
                     baseline_done.add(key)
@@ -4161,7 +5168,10 @@ class MainWindowHandlers:
             seen: dict[tuple, dict] = {}
             deduped: list[dict] = []
             order = tuple(PARAM_DISPLAY_ORDER)
+            idx = 0
             for event in events:
+                idx += 1
+                self._yield_ui(idx)
                 if event.get('type') != 'change':
                     deduped.append(event)
                     continue
@@ -4189,7 +5199,10 @@ class MainWindowHandlers:
             order = tuple(INDEX_PARAM_DISPLAY_ORDER)
             merged = 0
             logger = logging.getLogger(__name__)
+            idx = 0
             for event in events:
+                idx += 1
+                self._yield_ui(idx)
                 if event.get('type') != 'index_change':
                     deduped.append(event)
                     continue
@@ -4299,6 +5312,14 @@ class MainWindowHandlers:
                         pin_entry = machine_entry.setdefault(pin, {})
                         step_entry = pin_entry.setdefault(step_key, {})
                         step_entry[name] = step_entry.get(name, 0) + 1
+
+                try:
+                    machines_all = {f.machine for f in getattr(self, 'found_files', []) if getattr(f, 'machine', '')}
+                except Exception:
+                    machines_all = set()
+                for machine in sorted(machines_all):
+                    if machine and machine not in nested:
+                        nested[machine] = {}
 
                 def step_total(params_dict: dict[str, int]) -> int:
                     return sum(params_dict.values())
@@ -4769,6 +5790,188 @@ class MainWindowHandlers:
             self.program_table.resizeColumnsToContents()
             self.program_filtered_rows = flt
 
+    def _export_top_issues_csv(self):
+            tree = getattr(self, 'top_issues_tree', None)
+            if tree is None or tree.topLevelItemCount() == 0:
+                QMessageBox.information(self, "Brak danych", "Brak danych w drzewie do eksportu.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Zapisz CSV",
+                "top_issues.csv",
+                "CSV Files (*.csv)",
+            )
+            if not path:
+                return
+            headers = ["Maszyna", "Pin", "Step", "Parametr", "Zmian"]
+            try:
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.writer(f, delimiter=';')
+                    w.writerow(headers)
+                    for i in range(tree.topLevelItemCount()):
+                        item = tree.topLevelItem(i)
+                        w.writerow([
+                            item.text(0),
+                            item.text(1),
+                            item.text(2),
+                            item.text(3),
+                            item.text(4),
+                        ])
+                self._log(f"[Export] Zapisano CSV: {path}")
+            except Exception as ex:
+                QMessageBox.critical(self, "Blad eksportu", str(ex))
+
+    def _export_change_tree_csv(self):
+            tree = getattr(self, 'change_tree', None)
+            if tree is None or tree.topLevelItemCount() == 0:
+                QMessageBox.information(self, "Brak danych", "Brak danych w drzewie do eksportu.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Zapisz CSV",
+                "podsumowanie_zmian.csv",
+                "CSV Files (*.csv)",
+            )
+            if not path:
+                return
+            headers = ["Poziom", "Maszyna", "Pin", "Step", "Parametr", "Zmian"]
+
+            def step_label(text: str) -> str:
+                label = (text or "").strip()
+                if label.lower().startswith("step "):
+                    return label[5:].strip()
+                return label
+
+            def level_label(kind: str, level: int) -> str:
+                mapping = {
+                    "machine": "Maszyna",
+                    "pin": "Pin",
+                    "step": "Step",
+                    "param": "Parametr",
+                }
+                if kind in mapping:
+                    return mapping[kind]
+                return f"Poziom {level + 1}"
+
+            try:
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.writer(f, delimiter=';')
+                    w.writerow(headers)
+
+                    def walk(item, level: int, machine: str, pin: str, step: str):
+                        kind = ""
+                        data = item.data(0, Qt.UserRole)
+                        if isinstance(data, tuple) and data:
+                            kind = data[0]
+                            if kind == 'machine':
+                                machine = data[1] or item.text(0)
+                            elif kind == 'pin':
+                                machine = data[1] or machine
+                                pin = data[2] or item.text(0)
+                            elif kind == 'step':
+                                machine = data[1] or machine
+                                step = data[2] or step_label(item.text(0))
+                            elif kind == 'param':
+                                machine = data[1] or machine
+                                pin = data[2] or pin
+                                step = data[3] or step
+                        else:
+                            if level == 0:
+                                machine = item.text(0)
+                            elif level == 1:
+                                pin = item.text(0)
+                            elif level == 2:
+                                step = step_label(item.text(0))
+
+                        param = item.text(0) if level >= 3 or kind == 'param' else ""
+                        if kind == 'param' and isinstance(data, tuple) and len(data) >= 5:
+                            param = data[4] or param
+
+                        w.writerow([
+                            level_label(kind, level),
+                            machine,
+                            pin,
+                            step,
+                            param,
+                            item.text(1),
+                        ])
+                        for idx in range(item.childCount()):
+                            walk(item.child(idx), level + 1, machine, pin, step)
+
+                    for i in range(tree.topLevelItemCount()):
+                        walk(tree.topLevelItem(i), 0, "", "", "")
+
+                self._log(f"[Export] Zapisano CSV: {path}")
+            except Exception as ex:
+                QMessageBox.critical(self, "Blad eksportu", str(ex))
+
+    def _export_tree_csv(self):
+            tree = getattr(self, 'tree', None)
+            if tree is None or tree.topLevelItemCount() == 0:
+                QMessageBox.information(self, "Brak danych", "Brak danych w drzewie do eksportu.")
+                return
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Zapisz CSV",
+                "drzewo_zmian.csv",
+                "CSV Files (*.csv)",
+            )
+            if not path:
+                return
+            headers = ["Poziom", "Maszyna", "Data", "Godzina", "Zmian", "OK", "NOK", "% NOK", "OEE", "Szczegoly"]
+            try:
+                with open(path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.writer(f, delimiter=';')
+                    w.writerow(headers)
+                    for i in range(tree.topLevelItemCount()):
+                        m_item = tree.topLevelItem(i)
+                        machine = m_item.text(0)
+                        w.writerow([
+                            "Maszyna",
+                            machine,
+                            "",
+                            "",
+                            m_item.text(1),
+                            m_item.text(2),
+                            m_item.text(3),
+                            m_item.text(4),
+                            m_item.text(5),
+                            m_item.text(6),
+                        ])
+                        for j in range(m_item.childCount()):
+                            d_item = m_item.child(j)
+                            day = d_item.text(0)
+                            w.writerow([
+                                "Dzien",
+                                machine,
+                                day,
+                                "",
+                                d_item.text(1),
+                                d_item.text(2),
+                                d_item.text(3),
+                                d_item.text(4),
+                                d_item.text(5),
+                                d_item.text(6),
+                            ])
+                            for k in range(d_item.childCount()):
+                                h_item = d_item.child(k)
+                                hour = h_item.text(0)
+                                w.writerow([
+                                    "Godzina",
+                                    machine,
+                                    day,
+                                    hour,
+                                    h_item.text(1),
+                                    h_item.text(2),
+                                    h_item.text(3),
+                                    h_item.text(4),
+                                    h_item.text(5),
+                                    h_item.text(6),
+                                ])
+                self._log(f"[Export] Zapisano CSV: {path}")
+            except Exception as ex:
+                QMessageBox.critical(self, "Blad eksportu", str(ex))
+
     def _export_analysis_csv(self):
             rows = getattr(self, 'analysis_filtered_rows', getattr(self, 'analysis_events', []))
             if not rows:
@@ -4899,7 +6102,11 @@ class MainWindowHandlers:
                             w.writerow(["Pliki", len(paths), "Przykład", paths[0]])
                     w.writerow([])
                     value_names = list(getattr(self, 'param_card_value_names', list(PARAM_DISPLAY_ORDER)))
-                    csv_headers = ["Program", "Tabela", "Pin", "Step"] + value_names
+                    try:
+                        header_labels = self._param_card_header_labels(value_names)
+                    except Exception:
+                        header_labels = list(value_names)
+                    csv_headers = ["Program", "Table", "Pin", "Step"] + header_labels
                     w.writerow(csv_headers)
                     try:
                         sorted_snaps = sorted(

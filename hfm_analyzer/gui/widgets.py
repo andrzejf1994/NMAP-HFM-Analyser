@@ -10,7 +10,7 @@ from typing import Iterable, List
 
 from PyQt5.QtCore import QPointF, QRectF, Qt
 from PyQt5.QtGui import QBrush, QColor, QFont, QPainter, QPen
-from PyQt5.QtWidgets import QStyledItemDelegate, QWidget
+from PyQt5.QtWidgets import QStyledItemDelegate, QWidget, QToolTip
 
 from hfm_analyzer.constants import SUMMARY_PALETTE
 from hfm_analyzer.gui.utils import _natural_sort_key
@@ -22,14 +22,30 @@ class PieChartWidget(QWidget):
         super().__init__(parent)
         self._data: dict[str, int] = {}
         self._colors: dict[str, QColor] = {}
+        self._hover_slices: list[tuple[float, float, str, int]] = []
+        self._hover_center: QPointF | None = None
+        self._hover_radius = 0.0
+        self._hover_active = False
+        self._hover_index: int | None = None
         self.setMinimumHeight(220)
+        self.setMouseTracking(True)
 
     def set_data(self, data: dict[str, int]) -> None:
         self._data = dict(data) if data else {}
+        self._hover_slices = []
+        self._hover_center = None
+        self._hover_radius = 0.0
+        self._hover_active = False
+        self._hover_index = None
         self.update()
 
     def set_colors(self, color_map: dict[str, QColor]) -> None:
         self._colors = dict(color_map or {})
+        self._hover_slices = []
+        self._hover_center = None
+        self._hover_radius = 0.0
+        self._hover_active = False
+        self._hover_index = None
         self.update()
 
     def paintEvent(self, event) -> None:  # pragma: no cover - GUI painting
@@ -47,17 +63,22 @@ class PieChartWidget(QWidget):
             center_x = chart_rect.left() + radius
             center_y = chart_rect.center().y()
             bbox = QRectF(center_x - radius, center_y - radius, size, size)
+            self._hover_center = QPointF(center_x, center_y)
+            self._hover_radius = radius
 
             total = sum(self._data.values()) or 1
             fallback_colors = [QColor(c) for c in SUMMARY_PALETTE]
 
             start_angle = 0.0
+            self._hover_slices = []
             for index, (label, value) in enumerate(sorted(self._data.items(), key=lambda item: -item[1])):
                 angle = 360.0 * (value / total)
                 color = self._colors.get(label, fallback_colors[index % len(fallback_colors)])
                 painter.setBrush(color)
                 painter.setPen(Qt.NoPen)
                 painter.drawPie(bbox, int(start_angle * 16), int(angle * 16))
+                end_angle = start_angle + angle
+                self._hover_slices.append((start_angle, end_angle, str(label), int(value)))
                 start_angle += angle
 
             painter.setPen(QColor("#2c3e50"))
@@ -75,6 +96,54 @@ class PieChartWidget(QWidget):
         finally:
             painter.end()
 
+    def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if not self._hover_slices or self._hover_center is None or self._hover_radius <= 0:
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_index = None
+            return
+        pos = event.pos()
+        dx = pos.x() - self._hover_center.x()
+        dy = pos.y() - self._hover_center.y()
+        if dx * dx + dy * dy > self._hover_radius * self._hover_radius:
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_index = None
+            return
+        angle = (math.degrees(math.atan2(-dy, dx)) + 360.0) % 360.0
+        hit_idx = None
+        for idx, (start, end, _, _) in enumerate(self._hover_slices):
+            if end < start:
+                if angle >= start or angle < end:
+                    hit_idx = idx
+                    break
+            else:
+                if start <= angle < end:
+                    hit_idx = idx
+                    break
+        if hit_idx is None:
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_index = None
+            return
+        if hit_idx == self._hover_index:
+            return
+        _start, _end, label, value = self._hover_slices[hit_idx]
+        text = f"{label}\n{value}"
+        QToolTip.showText(event.globalPos(), text, self)
+        self._hover_active = True
+        self._hover_index = hit_idx
+
+    def leaveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if self._hover_active:
+            QToolTip.hideText()
+            self._hover_active = False
+            self._hover_index = None
+        super().leaveEvent(event)
+
 class BarChartWidget(QWidget):
     """Stacked bar chart used for the activity summary."""
 
@@ -87,19 +156,42 @@ class BarChartWidget(QWidget):
         self._overlay_x: list[str] = []
         self._overlay_y: list[int] = []
         self._overlay_min_top = 0
+        self._hover_bars: list[tuple[QRectF, str, str, int]] = []
+        self._hover_overlay: list[tuple[QPointF, str, int]] = []
+        self._hover_rect: QRectF | None = None
+        self._hover_active = False
+        self._hover_kind: str | None = None
+        self._hover_index: int | None = None
+        self.setMouseTracking(True)
 
     def set_data(self, x_labels: Iterable[str], series: dict[str, Iterable[int]]) -> None:
         self._x = list(x_labels) if x_labels else []
         self._series = {name: list(values) for name, values in (series or {}).items()}
+        self._hover_bars = []
+        self._hover_overlay = []
+        self._hover_rect = None
+        self._hover_active = False
+        self._hover_kind = None
+        self._hover_index = None
         self.update()
 
     def set_colors(self, color_map: dict[str, QColor]) -> None:
         self._colors = dict(color_map or {})
+        self._hover_bars = []
+        self._hover_overlay = []
+        self._hover_rect = None
+        self._hover_active = False
+        self._hover_kind = None
+        self._hover_index = None
         self.update()
 
     def set_overlay(self, x_labels: Iterable[str], y_values: Iterable[int]) -> None:
         self._overlay_x = list(x_labels) if x_labels else []
         self._overlay_y = list(y_values) if y_values else []
+        self._hover_overlay = []
+        self._hover_active = False
+        self._hover_kind = None
+        self._hover_index = None
         self.update()
 
     def set_overlay_min_ymax(self, value: int) -> None:
@@ -107,6 +199,10 @@ class BarChartWidget(QWidget):
             self._overlay_min_top = int(value)
         except Exception:
             self._overlay_min_top = 0
+        self._hover_overlay = []
+        self._hover_active = False
+        self._hover_kind = None
+        self._hover_index = None
         self.update()
 
     def paintEvent(self, event) -> None:  # pragma: no cover - GUI painting
@@ -122,6 +218,9 @@ class BarChartWidget(QWidget):
                 outer.width() - legend_width - 30 - 36,
                 outer.height() - 36,
             )
+            self._hover_rect = chart_rect
+            self._hover_bars = []
+            self._hover_overlay = []
             painter.fillRect(self.rect(), QColor("white"))
 
             painter.setPen(QPen(QColor("#95a5a6"), 1))
@@ -193,7 +292,11 @@ class BarChartWidget(QWidget):
                     x = cx_left + (bar_group_width - n_series * bar_width) / 2 + series_index * bar_width
                     height = 0 if y_value <= 0 else (min(y_value, y_max) / y_max) * chart_rect.height()
                     y = chart_rect.bottom() - height
-                    painter.drawRect(QRectF(x, y, bar_width, height))
+                    rect = QRectF(x, y, bar_width, height)
+                    painter.drawRect(rect)
+                    if height > 0:
+                        label = self._x[date_index] if date_index < len(self._x) else str(date_index)
+                        self._hover_bars.append((rect, name, str(label), int(y_value)))
 
             painter.setPen(QColor("#2c3e50"))
             legend_x = outer.right() - legend_width + 10
@@ -231,6 +334,7 @@ class BarChartWidget(QWidget):
                 try:
                     x_index = {str(lbl): idx for idx, lbl in enumerate(self._x)}
                     points = []
+                    overlay_meta: list[tuple[str, int]] = []
                     for label, y_value in zip(self._overlay_x, self._overlay_y):
                         text = str(label)
                         position = None
@@ -255,6 +359,7 @@ class BarChartWidget(QWidget):
                         yy = (0 if y_max_overlay == 0 else (y_value / y_max_overlay) * chart_rect.height())
                         y = chart_rect.bottom() - min(chart_rect.height(), max(0.0, yy))
                         points.append(QPointF(cx, y))
+                        overlay_meta.append((str(label), int(y_value)))
                     if len(points) > 1:
                         painter.save()
                         painter.setClipRect(chart_rect)
@@ -262,6 +367,9 @@ class BarChartWidget(QWidget):
                         for idx in range(1, len(points)):
                             painter.drawLine(points[idx - 1], points[idx])
                         painter.restore()
+                    self._hover_overlay = [
+                        (pt, label, value) for pt, (label, value) in zip(points, overlay_meta)
+                    ]
 
                     painter.setPen(QPen(QColor("#e74c3c"), 2))
                     painter.drawLine(
@@ -281,6 +389,66 @@ class BarChartWidget(QWidget):
         finally:
             painter.end()
 
+    def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if self._hover_rect is None:
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_kind = None
+                self._hover_index = None
+            return
+        pos = event.pos()
+        if not self._hover_rect.contains(QPointF(pos)):
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_kind = None
+                self._hover_index = None
+            return
+        for idx, (rect, name, label, value) in enumerate(self._hover_bars):
+            if rect.contains(QPointF(pos)):
+                if self._hover_kind == "bar" and self._hover_index == idx:
+                    return
+                text = f"{name}: {value}\n{label}"
+                QToolTip.showText(event.globalPos(), text, self)
+                self._hover_active = True
+                self._hover_kind = "bar"
+                self._hover_index = idx
+                return
+        if self._hover_overlay:
+            best_idx = None
+            best_dist = None
+            for idx, (pt, _label, _value) in enumerate(self._hover_overlay):
+                dx = pt.x() - pos.x()
+                dy = pt.y() - pos.y()
+                dist = dx * dx + dy * dy
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_idx = idx
+            if best_dist is not None and best_dist <= 64.0 and best_idx is not None:
+                if self._hover_kind == "overlay" and self._hover_index == best_idx:
+                    return
+                _pt, label, value = self._hover_overlay[best_idx]
+                text = f"NOK: {value}\n{label}"
+                QToolTip.showText(event.globalPos(), text, self)
+                self._hover_active = True
+                self._hover_kind = "overlay"
+                self._hover_index = best_idx
+                return
+        if self._hover_active:
+            QToolTip.hideText()
+            self._hover_active = False
+            self._hover_kind = None
+            self._hover_index = None
+
+    def leaveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if self._hover_active:
+            QToolTip.hideText()
+            self._hover_active = False
+            self._hover_kind = None
+            self._hover_index = None
+        super().leaveEvent(event)
+
 class ParetoChartWidget(QWidget):
     """Simple Pareto chart that highlights dominant NOK sources."""
 
@@ -292,7 +460,15 @@ class ParetoChartWidget(QWidget):
         self._series_names: list[str] = []
         self._series_values: dict[str, list[int]] = {}
         self._colors: dict[str, QColor] = {}
+        self._hover_bars: list[tuple[QRectF, str, str, int]] = []
+        self._hover_bar_groups: list[tuple[float, float, str, list[tuple[float, float, str, int]]]] = []
+        self._hover_points: list[tuple[QPointF, str, float]] = []
+        self._hover_rect: QRectF | None = None
+        self._hover_active = False
+        self._hover_kind: str | None = None
+        self._hover_index: int | None = None
         self.setMinimumHeight(260)
+        self.setMouseTracking(True)
 
     def set_data(self, data: dict[str, int] | None) -> None:
         self._labels = []
@@ -301,6 +477,13 @@ class ParetoChartWidget(QWidget):
         self._series_names = []
         self._series_values = {}
         self._colors = {}
+        self._hover_bars = []
+        self._hover_bar_groups = []
+        self._hover_points = []
+        self._hover_rect = None
+        self._hover_active = False
+        self._hover_kind = None
+        self._hover_index = None
         if not data:
             self.update()
             return
@@ -370,6 +553,13 @@ class ParetoChartWidget(QWidget):
             name: palette[idx % len(palette)] if palette else QColor("#3498db")
             for idx, name in enumerate(series_names)
         }
+        self._hover_bars = []
+        self._hover_bar_groups = []
+        self._hover_points = []
+        self._hover_rect = None
+        self._hover_active = False
+        self._hover_kind = None
+        self._hover_index = None
         self.update()
 
     def paintEvent(self, event) -> None:  # pragma: no cover - GUI painting
@@ -386,6 +576,10 @@ class ParetoChartWidget(QWidget):
                 max(10.0, outer.width() - 40 - legend_width - 20),
                 max(10.0, outer.height() - 40),
             )
+            self._hover_rect = chart_rect
+            self._hover_bars = []
+            self._hover_bar_groups = []
+            self._hover_points = []
 
             painter.setPen(QPen(QColor("#95a5a6"), 1))
             painter.drawLine(chart_rect.bottomLeft(), chart_rect.bottomRight())
@@ -420,6 +614,7 @@ class ParetoChartWidget(QWidget):
             for index, label in enumerate(self._labels):
                 x = chart_rect.left() + index * bar_group_width + (bar_group_width - bar_width) / 2
                 y_bottom = chart_rect.bottom()
+                segments: list[tuple[float, float, str, int]] = []
                 for series_name in self._series_names:
                     values = self._series_values.get(series_name, [])
                     if index >= len(values):
@@ -431,8 +626,14 @@ class ParetoChartWidget(QWidget):
                     y_top = y_bottom - height
                     painter.setPen(Qt.NoPen)
                     painter.setBrush(self._colors.get(series_name, QColor("#2980b9")))
-                    painter.drawRect(QRectF(x, y_top, bar_width, height))
+                    rect = QRectF(x, y_top, bar_width, height)
+                    painter.drawRect(rect)
+                    if height > 0:
+                        self._hover_bars.append((rect, str(label), str(series_name), int(value)))
+                        segments.append((y_top, y_bottom, str(series_name), int(value)))
                     y_bottom = y_top
+                if segments:
+                    self._hover_bar_groups.append((x, x + bar_width, str(label), segments))
                 if index % label_stride == 0:
                     text = str(label)
                     if len(text) > 12:
@@ -465,6 +666,10 @@ class ParetoChartWidget(QWidget):
                 x = chart_rect.left() + (index + 0.5) * bar_group_width
                 y = chart_rect.bottom() - (percentage / 100.0) * chart_rect.height()
                 cumulative_points.append(QPointF(x, y))
+            self._hover_points = [
+                (pt, str(label), float(percentage))
+                for pt, label, percentage in zip(cumulative_points, self._labels, self._cumulative)
+            ]
             if cumulative_points:
                 for start, end in zip(cumulative_points, cumulative_points[1:]):
                     painter.drawLine(start, end)
@@ -499,6 +704,69 @@ class ParetoChartWidget(QWidget):
         finally:
             painter.end()
 
+    def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if self._hover_rect is None:
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_kind = None
+                self._hover_index = None
+            return
+        pos = event.pos()
+        if not self._hover_rect.contains(QPointF(pos)):
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_kind = None
+                self._hover_index = None
+            return
+        for idx, (x_left, x_right, label, segments) in enumerate(self._hover_bar_groups):
+            if pos.x() < x_left or pos.x() > x_right:
+                continue
+            for seg_index, (y_top, y_bottom, series_name, value) in enumerate(segments):
+                if y_top <= pos.y() <= y_bottom:
+                    if self._hover_kind == "bar" and self._hover_index == (idx * 1000 + seg_index):
+                        return
+                    text = f"Źródło: {label}\nMaszyna: {series_name}\nNOK: {value}"
+                    QToolTip.showText(event.globalPos(), text, self)
+                    self._hover_active = True
+                    self._hover_kind = "bar"
+                    self._hover_index = idx * 1000 + seg_index
+                    return
+        if self._hover_points:
+            best_idx = None
+            best_dist = None
+            for idx, (pt, _label, _pct) in enumerate(self._hover_points):
+                dx = pt.x() - pos.x()
+                dy = pt.y() - pos.y()
+                dist = dx * dx + dy * dy
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_idx = idx
+            if best_dist is not None and best_dist <= 64.0 and best_idx is not None:
+                if self._hover_kind == "line" and self._hover_index == best_idx:
+                    return
+                _pt, label, pct = self._hover_points[best_idx]
+                text = f"{pct:.1f}%\n{label}"
+                QToolTip.showText(event.globalPos(), text, self)
+                self._hover_active = True
+                self._hover_kind = "line"
+                self._hover_index = best_idx
+                return
+        if self._hover_active:
+            QToolTip.hideText()
+            self._hover_active = False
+            self._hover_kind = None
+            self._hover_index = None
+
+    def leaveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if self._hover_active:
+            QToolTip.hideText()
+            self._hover_active = False
+            self._hover_kind = None
+            self._hover_index = None
+        super().leaveEvent(event)
+
 class LineChartWidget(QWidget):
     """Simple line chart widget used for parameter trends when WebEngine is unavailable."""
 
@@ -507,7 +775,12 @@ class LineChartWidget(QWidget):
         self._points: list[tuple[datetime, float]] = []
         self._title: str = ""
         self._color = QColor("#3498db")
+        self._hover_points: list[tuple[QPointF, datetime, float]] = []
+        self._hover_rect: QRectF | None = None
+        self._hover_index: int | None = None
+        self._hover_active = False
         self.setMinimumHeight(220)
+        self.setMouseTracking(True)
 
     def set_series(
         self,
@@ -531,7 +804,14 @@ class LineChartWidget(QWidget):
         self._points = cleaned
         if color is not None:
             self._color = QColor(color)
+        self._hover_points = []
+        self._hover_rect = None
+        self._hover_index = None
+        self._hover_active = False
         self.update()
+
+    def series_snapshot(self) -> tuple[str, list[tuple[datetime, float]], QColor]:
+        return self._title, list(self._points), QColor(self._color)
 
     def paintEvent(self, event) -> None:  # pragma: no cover - GUI painting
         painter = QPainter(self)
@@ -617,6 +897,11 @@ class LineChartWidget(QWidget):
                 x = chart_rect.left() + (offset / x_span) * chart_rect.width()
                 y = chart_rect.bottom() - ((value - y_min) / (y_max - y_min)) * chart_rect.height()
                 points.append(QPointF(x, y))
+            self._hover_rect = chart_rect
+            self._hover_points = [
+                (pt, self._points[idx][0], self._points[idx][1])
+                for idx, pt in enumerate(points)
+            ]
 
             painter.setPen(QPen(self._color, 2))
             painter.setBrush(Qt.NoBrush)
@@ -652,6 +937,50 @@ class LineChartWidget(QWidget):
                 )
         finally:
             painter.end()
+
+    def mouseMoveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if not self._hover_points or self._hover_rect is None:
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_index = None
+            return
+        pos = event.pos()
+        if not self._hover_rect.contains(QPointF(pos)):
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_index = None
+            return
+        best_idx = None
+        best_dist = None
+        for idx, (pt, _, _) in enumerate(self._hover_points):
+            dx = pt.x() - pos.x()
+            dy = pt.y() - pos.y()
+            dist = dx * dx + dy * dy
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+        if best_dist is None or best_dist > 64.0:
+            if self._hover_active:
+                QToolTip.hideText()
+                self._hover_active = False
+                self._hover_index = None
+            return
+        if best_idx is None or best_idx == self._hover_index:
+            return
+        _, dt_value, y_value = self._hover_points[best_idx]
+        text = f"{y_value:.3g}\n{dt_value:%Y-%m-%d %H:%M:%S}"
+        QToolTip.showText(event.globalPos(), text, self)
+        self._hover_active = True
+        self._hover_index = best_idx
+
+    def leaveEvent(self, event) -> None:  # pragma: no cover - GUI interaction
+        if self._hover_active:
+            QToolTip.hideText()
+            self._hover_active = False
+            self._hover_index = None
+        super().leaveEvent(event)
 
 class CountBadgeDelegate(QStyledItemDelegate):
     """Delegate drawing circular badges for numeric values in tree widgets."""

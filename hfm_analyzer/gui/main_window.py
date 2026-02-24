@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PyQt5.QtCore import QDateTime, QSettings, QTime, Qt, QSize
+from PyQt5.QtCore import QDateTime, QSettings, QTime, Qt, QSize, QTimer
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QAction,
@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QDialog,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -50,7 +51,6 @@ from hfm_analyzer.models import (
     IndexSnapshot,
     ParamSnapshot,
 )
-from hfm_analyzer.storage.runtime_sqlite_cache import RuntimeSQLiteCache
 from hfm_analyzer.gui.handlers import MainWindowHandlers
 from hfm_analyzer.gui.tabs import (
     ChangesTab,
@@ -77,10 +77,10 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         super().__init__()
         self.settings = settings
         try:
-            self.runtime_cache = RuntimeSQLiteCache()
-            self.runtime_cache_path = self.runtime_cache.path
+            self.runtime_cache = self._create_runtime_cache()
         except Exception:
             self.runtime_cache = None
+        if self.runtime_cache is None:
             self.runtime_cache_path = ""
         app = QApplication.instance()
         if app is not None and not app.windowIcon().isNull():
@@ -101,9 +101,16 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         toolbar.addWidget(title)
         toolbar.addSeparator()
     
-        self.base_path_label = QLabel()
-        self.base_path_label.setTextFormat(Qt.RichText)
+        self.base_path_label = QLabel("Linia:")
+        self.base_path_label.setStyleSheet("color:#2c3e50;font-weight:600;")
         toolbar.addWidget(self.base_path_label)
+        self.line_selector = QComboBox()
+        self.line_selector.setMinimumWidth(220)
+        self.line_selector.currentIndexChanged.connect(self._on_line_selector_changed)
+        toolbar.addWidget(self.line_selector)
+        self.line_status_label = QLabel()
+        self.line_status_label.setStyleSheet("color:#7f8c8d;")
+        toolbar.addWidget(self.line_status_label)
         toolbar.addSeparator()
     
         #choose_base = QAction("Zmień katalog", self)
@@ -315,6 +322,15 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
             chart = LineChartWidget()
             chart.setMinimumHeight(220)
             chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            header = QHBoxLayout()
+            header.addStretch(1)
+            zoom_btn = QToolButton()
+            zoom_btn.setText("Powiększ")
+            zoom_btn.setToolTip("Powiększ wykres")
+            zoom_btn.setAutoRaise(True)
+            zoom_btn.clicked.connect(lambda _, c=chart, n=name: self._open_line_chart_zoom(c, n))
+            header.addWidget(zoom_btn)
+            group_layout.addLayout(header)
             group_layout.addWidget(chart)
             pc_container_layout.addWidget(group)
             self.param_line_charts[name] = chart
@@ -369,6 +385,15 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
             chart = LineChartWidget()
             chart.setMinimumHeight(220)
             chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            header = QHBoxLayout()
+            header.addStretch(1)
+            zoom_btn = QToolButton()
+            zoom_btn.setText("Powiększ")
+            zoom_btn.setToolTip("Powiększ wykres")
+            zoom_btn.setAutoRaise(True)
+            zoom_btn.clicked.connect(lambda _, c=chart, n=name: self._open_line_chart_zoom(c, n))
+            header.addWidget(zoom_btn)
+            group_layout.addLayout(header)
             group_layout.addWidget(chart)
             ic_container_layout.addWidget(group)
             self.index_line_charts[name] = chart
@@ -417,7 +442,12 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
             + list(HAIRPIN_PARAM_ORDER)
         )
         self.param_card_value_names = value_columns
-        param_headers = ["Program", "Tabela", "Pin", "Step"] + value_columns
+        try:
+            header_labels = self._param_card_header_labels(value_columns)
+        except Exception:
+            header_labels = list(value_columns)
+        self.param_card_header_labels = header_labels
+        param_headers = ["Program", "Table", "Pin", "Step"] + header_labels
         self.param_card_table = QTableWidget(0, len(param_headers))
         self.param_card_table.setHorizontalHeaderLabels(param_headers)
         self.param_card_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -518,9 +548,12 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
     
         intra_btns = QHBoxLayout()
         intra_btns.setSpacing(6)
+        intra_refresh = QPushButton("Odśwież Intranet")
+        intra_refresh.clicked.connect(self._start_intranet_fetch)
         intra_export = QPushButton("Eksport CSV")
         intra_export.clicked.connect(self._export_intranet_csv)
         intra_btns.addStretch(1)
+        intra_btns.addWidget(intra_refresh)
         intra_btns.addWidget(intra_export)
         intra_layout.addLayout(intra_btns)
     
@@ -529,6 +562,7 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         self.intranet_filtered_rows: list[dict] = []
         self.intranet_all_rows: list[dict] = []
         self.intranet_nok_rows: list[dict] = []
+        self.intranet_nok_rows_all: list[dict] = []
     
     
         self.pareto_tab = QWidget()
@@ -589,17 +623,6 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         self._hairpin_display_to_source: dict[str, str] = {}
         self.hp_grip_filtered: list[dict] = []
         self.hairpin_filtered: list[dict] = []
-        self._populate_param_line_filters()
-        self._populate_index_line_filters()
-        self._clear_param_line_charts()
-        self._clear_index_line_charts()
-        self._populate_param_card_filters()
-        self._configure_hp_grip_table()
-        self._configure_stripping_table()
-        self._populate_hp_grip_filters()
-        self._populate_stripping_filters()
-        self._populate_pareto_filters()
-    
         root.addWidget(self.tabs)
     
         root.setStretch(0, 1)
@@ -626,8 +649,81 @@ class ModernMainWindow(MainWindowHandlers, QMainWindow):
         self.start_datetime.setDateTime(QDateTime(now.date().addDays(-1), QTime(6, 0)))
     
     
-        self._refresh_base_path_label()
-        self._populate_machines()
         self._apply_styles()
+        QTimer.singleShot(0, self._post_init_load)
+
+    def _post_init_load(self) -> None:
+        try:
+            self._refresh_base_path_label()
+        except Exception:
+            pass
+        try:
+            self._populate_machines()
+        except Exception:
+            pass
+        try:
+            self._populate_param_line_filters()
+        except Exception:
+            pass
+        try:
+            self._populate_index_line_filters()
+        except Exception:
+            pass
+        try:
+            self._clear_param_line_charts()
+        except Exception:
+            pass
+        try:
+            self._clear_index_line_charts()
+        except Exception:
+            pass
+        try:
+            self._populate_param_card_filters()
+        except Exception:
+            pass
+        try:
+            self._configure_hp_grip_table()
+        except Exception:
+            pass
+        try:
+            self._configure_stripping_table()
+        except Exception:
+            pass
+        try:
+            self._populate_hp_grip_filters()
+        except Exception:
+            pass
+        try:
+            self._populate_stripping_filters()
+        except Exception:
+            pass
+        try:
+            self._populate_pareto_filters()
+        except Exception:
+            pass
+
+    def _open_line_chart_zoom(self, source: LineChartWidget, title: str | None = None) -> None:
+        if source is None:
+            return
+        chart_title, points, color = source.series_snapshot()
+        if title:
+            chart_title = title
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Wykres: {chart_title}")
+        dialog.setWindowFlags(
+            dialog.windowFlags()
+            | Qt.Window
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowMinimizeButtonHint
+        )
+        dialog.setMinimumSize(820, 520)
+        layout = QVBoxLayout(dialog)
+        from PyQt5.QtWidgets import QSizePolicy
+        zoom_chart = LineChartWidget()
+        zoom_chart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        zoom_chart.setMinimumHeight(360)
+        zoom_chart.set_series(chart_title, points, color)
+        layout.addWidget(zoom_chart)
+        dialog.exec_()
 
 __all__ = ["ModernMainWindow"]
